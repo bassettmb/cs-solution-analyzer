@@ -5,8 +5,6 @@ import sys
 
 import xml.dom.minidom as xml
 
-from collections import deque
-
 from collections.abc import Iterable
 from argparse import ArgumentParser
 from pathlib import Path, PureWindowsPath
