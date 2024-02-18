@@ -8,23 +8,23 @@ import xml.dom.minidom as xml
 from collections.abc import Iterable
 from argparse import ArgumentParser
 from pathlib import Path, PureWindowsPath
-from typing import NewType
+from typing import NewType, Optional
 
 
 parser = ArgumentParser(
-  prog="repo-dependency-analyzer",
-  description="Multi-project dependency analysis."
+    prog="repo-dependency-analyzer",
+    description="Multi-project dependency analysis."
 )
 parser.add_argument(
-  "-r", "--root",
-  dest="root",
-  default=".",
-  help="subtree of the repository in which to search"
+    "-r", "--root",
+    dest="root",
+    default=".",
+    help="subtree of the repository in which to search"
 )
 parser.add_argument(
-  "repo",
-  metavar="REPOSITORY",
-  help="repository in which to search"
+    "repo",
+    metavar="REPOSITORY",
+    help="repository in which to search"
 )
 
 
@@ -56,7 +56,7 @@ def run_find(*args, **kwargs):
 
 
 def find_solutions(repo):
-    return run_find(".sln$", repo)
+    return run_find("\\.sln$", str(repo))
 
 
 def _get_xml_text(node: xml.Node) -> str:
@@ -85,13 +85,14 @@ def _build_parse_assembly_name_regexp():
 
 
 Guid = NewType("Guid", str)
+Name = NewType("Name", str)
 
 
 class AssemblyId:
 
     def __init__(
             self,
-            name: str, path: None | Path,
+            name: Name, path: Optional[Path],
             is_nuget_assembly: bool = False
     ):
         self._name = name
@@ -99,11 +100,11 @@ class AssemblyId:
         self._is_nuget_assembly = bool(is_nuget_assembly)
 
     @property
-    def name(self) -> str:
+    def name(self) -> Name:
         return self._name
 
     @property
-    def path(self) -> None | Path:
+    def path(self) -> Optional[Path]:
         return self._path
 
     @property
@@ -126,7 +127,6 @@ class AssemblyId:
             f"AssemblyId({self.name}, {self.path}, ",
             f"is_nuget_assembly={self.is_nuget_assembly})"
         ])
-
 
 
 class ProjectId:
@@ -195,8 +195,9 @@ class Project:
 
     _project_ref_ids: dict[Guid, ProjectId]
     # note: we are not using is_nuget_assembly as a distinguishing factor
-    _assembly_ref_ids: dict[str, dict[None | Path, AssemblyId]]
+    _assembly_ref_ids: dict[Name, dict[Optional[Path], AssemblyId]]
     _source_ref_ids: dict[Path, SourceId]
+    # _dangling_source_ref_ids: set[SourceId]
 
     _PARSE_ASSEMBLY_NAME_REGEXP = _build_parse_assembly_name_regexp()
 
@@ -208,7 +209,7 @@ class Project:
         self._load()
 
     @classmethod
-    def load(cls, project_id: ProjectId) -> "None | Project":
+    def load(cls, project_id: ProjectId) -> "Optional[Project]":
         if not project_id.path.exists():
             return None
         return cls(project_id)
@@ -252,7 +253,10 @@ class Project:
         else:
             self._assembly_ref_ids[name] = {assembly_id.path: assembly_id}
 
-    def _load_assembly_ref(self, assembly_ref: xml.Element):
+    def _load_assembly_ref(
+            self,
+            assembly_ref: xml.Element
+    ) -> Optional[AssemblyId]:
         # All references must(?) have an include attribute.
         if not assembly_ref.hasAttribute("Include"):
             return None
@@ -319,7 +323,7 @@ class Project:
             else:
                 path = self._normalize_relpath(path)
 
-        return AssemblyId(name, path, is_nuget_assembly)
+        return AssemblyId(Name(name), path, is_nuget_assembly)
 
     def _load_assembly_refs(self, root: xml.Element):
         for assembly_ref in root.getElementsByTagName("Reference"):
@@ -342,7 +346,10 @@ class Project:
                     ])
                 )
 
-    def _load_project_ref(self, project_ref: xml.Element):
+    def _load_project_ref(
+            self,
+            project_ref: xml.Element
+    ) -> Optional[ProjectId]:
         if not project_ref.hasAttribute("Include"):
             return None
 
@@ -387,7 +394,7 @@ class Project:
         else:
             self._source_ref_ids[path] = source_id
 
-    def _load_source_ref(self, root: xml.Element):
+    def _load_source_ref(self, root: xml.Element) -> Optional[SourceId]:
         if not root.hasAttribute("Include"):
             return None
         path = self._normalize_relpath(root.getAttribute("Include"))
@@ -409,22 +416,26 @@ class Project:
 
 class Solution:
 
+    # TODO: track the source of the broken stuff
+
     _path: Path
     _project_roots: dict[Guid, ProjectId]
     _project_registry: dict[Guid, Project]
+    _project_undeclared: dict[ProjectId, set[ProjectId]]
     _project_dangling: dict[Guid, ProjectId]
-    _assembly_dangling: set[AssemblyId]
-    _source_dangling: set[SourceId]
+    _assembly_dangling: dict[ProjectId, set[AssemblyId]]
+    _source_dangling: dict[ProjectId, set[SourceId]]
 
     _PARSE_PROJECT_REGEXP = _build_parse_project_regexp()
 
     def __init__(self, path: str | Path):
-        self._path = Path(path)
+        self._path = _normalize_windows_path(path)
         self._project_roots = dict()
         self._project_registry = dict()
+        self._project_undeclared = dict()
         self._project_dangling = dict()
-        self._assembly_dangling = set()
-        self._source_dangling = set()
+        self._assembly_dangling = dict()
+        self._source_dangling = dict()
         self._load()
 
     def _parse_project(self, line):
@@ -467,14 +478,39 @@ class Solution:
                     self._project_roots[project.guid] = project
 
     def _scan_projects(self):
+
+        def multiset_insert(key, value, map):
+            if key in map:
+                value_set = map[key]
+            else:
+                value_set = set()
+                map[key] = value_set
+            value_set.add(value)
+
         for project in self._project_registry.values():
+            project_id = project.project_id
+            for subproject_id in project.project_refs():
+                if subproject_id.guid not in self._project_roots:
+                    multiset_insert(
+                        project_id,
+                        subproject_id,
+                        self._project_undeclared
+                    )
             for assembly in project.assembly_refs():
                 path = assembly.path
                 if path is not None and not path.exists():
-                    self._assembly_dangling.add(assembly)
+                    multiset_insert(
+                        project_id,
+                        assembly,
+                        self._assembly_dangling
+                    )
             for source in project.source_refs():
                 if not source.path.exists():
-                    self._source_dangling.add(source)
+                    multiset_insert(
+                        project_id,
+                        source,
+                        self._source_dangling
+                    )
 
     def _load(self):
         self._load_roots()
@@ -491,14 +527,51 @@ class Solution:
     def projects(self) -> Iterable[ProjectId]:
         return self._project_registry.values()
 
+    @property
+    def is_broken(self) -> bool:
+        return (
+            self.has_undeclared_projects or
+            self.has_dangling_projects or
+            self.has_dangling_assemblies or
+            self.has_dangling_sources
+        )
+
+    @property
+    def has_undeclared_projects(self) -> bool:
+        return len(self._project_undeclared) > 0
+
+    @property
+    def has_dangling_projects(self) -> bool:
+        return len(self._project_dangling) > 0
+
+    @property
+    def has_dangling_assemblies(self) -> bool:
+        return len(self._assembly_dangling) > 0
+
+    @property
+    def has_dangling_sources(self) -> bool:
+        return len(self._source_dangling) > 0
+
+    def undeclared_projects(
+            self
+    ) -> Iterable[tuple[ProjectId, list[ProjectId]]]:
+        for project, undeclared in self._project_undeclared.items():
+            yield (project, list(undeclared))
+
     def dangling_projects(self) -> Iterable[ProjectId]:
         return self._project_dangling.values()
 
-    def dangling_assemblies(self) -> Iterable[AssemblyId]:
-        return iter(self._assembly_dangling)
+    def dangling_assemblies(
+            self
+    ) -> Iterable[tuple[ProjectId, list[AssemblyId]]]:
+        for project, assembly_set in self._assembly_dangling.items():
+            yield (project, list(assembly_set))
 
-    def dangling_sources(self) -> Iterable[SourceId]:
-        return iter(self._source_dangling)
+    def dangling_sources(
+            self
+    ) -> Iterable[tuple[ProjectId, list[SourceId]]]:
+        for project, source_set in self._source_dangling.items():
+            yield (project, list(source_set))
 
     # def __contains__(self, item: Guid | ProjectId) -> bool:
     #     guid = item.guid if isinstance(item, ProjectId) else item
@@ -512,14 +585,36 @@ class Solution:
 
 
 args = parser.parse_args()
-repo = Path(args.repo)
+repo = _normalize_windows_path(args.repo)
+root = _normalize_windows_path(args.root)
 
-for line in find_solutions(repo).stdout.splitlines():
+os.chdir(repo)
+for line in find_solutions(root).stdout.splitlines():
+
     solution = Solution(line)
-    for project_id in solution.dangling_projects():
-        print(project_id)
-    for assembly_id in solution.dangling_assemblies():
-        print(assembly_id)
-    for source_id in solution.dangling_sources():
-        print(source_id)
-    break
+    indent = "    "
+
+    if solution.is_broken:
+        print(solution.path)
+        if solution.has_undeclared_projects:
+            print(indent + "undeclared projects:")
+            for project, project_ids in solution.undeclared_projects():
+                print(indent * 2 + str(project.path))
+                for project_id in project_ids:
+                    print(indent * 3 + str(project_id.path))
+        if solution.has_dangling_projects:
+            print(indent + "dangling projects:")
+            for project_id in solution.dangling_projects():
+                print(indent * 2 + str(project_id.path))
+        if solution.has_dangling_assemblies:
+            print(indent + "dangling assemblies:")
+            for (project_id, assembly_ids) in solution.dangling_assemblies():
+                print(indent * 2 + str(project_id.path))
+                for assembly_id in assembly_ids:
+                    print(indent * 3 + str(assembly_id.path))
+        if solution.has_dangling_sources:
+            print(indent + "dangling_sources:")
+            for (project_id, source_ids) in solution.dangling_sources():
+                print(indent * 2 + str(project_id.path))
+                for source_id in source_ids:
+                    print(indent * 3 + str(source_id.path))
