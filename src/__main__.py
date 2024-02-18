@@ -458,16 +458,14 @@ class Solution:
         while len(stack) > 0:
             project_id = stack.pop()
             guid = project_id.guid
-            assert guid not in self._project_registry
-            assert guid not in self._project_dangling
-            project = Project.load(project_id)
-            if project is None:
-                self._project_dangling[guid] = project_id
-            else:
-                self._project_registry[guid] = Project(project_id)
-                for project_id in project.project_refs():
-                    if not (guid in self._project_registry or
-                            guid in self._project_dangling):
+            if not (guid in self._project_registry or
+                    guid in self._project_dangling):
+                project = Project.load(project_id)
+                if project is None:
+                    self._project_dangling[guid] = project_id
+                else:
+                    self._project_registry[guid] = Project(project_id)
+                    for project_id in project.project_refs():
                         stack.append(project_id)
 
     def _load_roots(self):
