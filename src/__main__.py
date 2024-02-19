@@ -5,6 +5,8 @@ import sys
 
 import xml.dom.minidom as xml
 
+import enum
+from enum import Enum
 from collections.abc import Iterable
 from argparse import ArgumentParser
 from pathlib import Path, PureWindowsPath
@@ -458,6 +460,10 @@ class Solution:
         while len(stack) > 0:
             project_id = stack.pop()
             guid = project_id.guid
+            assert (
+                (project_id.guid not in self._project_registry) or
+                self._project_registry[project_id.guid].project_id == project_id
+            )
             if not (guid in self._project_registry or
                     guid in self._project_dangling):
                 project = Project.load(project_id)
@@ -474,6 +480,49 @@ class Solution:
                 project = self._parse_project(line)
                 if project:
                     self._project_roots[project.guid] = project
+
+    def topsort(self) -> [bool, list[ProjectId]]:
+
+        class Mark(Enum):
+            WHITE = 0
+            GREY = enum.auto()
+            BLACK = enum.auto()
+
+        marks = dict()
+        output = []
+
+        def visit(project_id: ProjectId) -> Optional[list[ProjectId]]:
+            assert isinstance(project_id, ProjectId)
+            match marks.get(project_id, Mark.WHITE):
+                case Mark.GREY:
+                    return [project_id]
+                case Mark.BLACK:
+                    return None
+            if project_id.guid in self._project_dangling:
+                marks[project_id] = Mark.BLACK
+                output.append(project_id)
+                return None
+            marks[project_id] = Mark.GREY
+            project = self._project_registry[project_id.guid]
+            for subproject_id in project.project_refs():
+                result = visit(subproject_id)
+                if result is not None:
+                    result.append(project_id)
+                    return result
+            marks[project_id] = Mark.BLACK
+            output.append(project_id)
+            return None
+
+        for guid in self._project_roots:
+            root_id = self._project_roots[guid]
+            result = visit(root_id)
+            if result is not None:
+                result.append(root_id)
+                result.reverse()
+                return [False, result]
+
+        output.reverse()
+        return [True, output]
 
     def _scan_projects(self):
 
@@ -591,9 +640,14 @@ for line in find_solutions(root).stdout.splitlines():
 
     solution = Solution(line)
     indent = "    "
+    acyclic, project_deps = solution.topsort()
 
-    if solution.is_broken:
+    if solution.is_broken or not acyclic:
         print(solution.path)
+        if not acyclic:
+            print(indent + "dependency cycle:")
+            for project_dep in project_deps:
+                print(indent * 2 + str(project_dep.path))
         if solution.has_undeclared_projects:
             print(indent + "undeclared projects:")
             for project, project_ids in solution.undeclared_projects():
