@@ -2,13 +2,18 @@ import enum
 import re
 
 from enum import Enum
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Mapping, Set, ValuesView
 from pathlib import Path
 from typing import Optional
 
 from . import util
 from .id import AssemblyId, Guid, ProjectId, SourceId
-from .project import Project
+from .data_view import (MultiMapView, SetView)
+from .project import (
+    Project,
+    ProjectLoadComplete, ProjectLoadDangling, ProjectLoadCycle,
+    ProjectLoadResult
+)
 
 
 def _build_parse_project_regexp():
@@ -72,12 +77,15 @@ class Solution:
             if not (guid in self._project_registry or
                     guid in self._project_dangling):
                 project = Project.load(project_id)
-                if project is None:
-                    self._project_dangling[guid] = project_id
-                else:
-                    self._project_registry[guid] = Project(project_id)
-                    for project_id in project.project_refs():
-                        stack.append(project_id)
+                match project:
+                    case ProjectLoadDangling(_):
+                        self._project_dangling[guid] = project_id
+                    case ProjectLoadComplete(project):
+                        self._project_registry[guid] = project
+                        for project_id in project.project_refs():
+                            stack.append(project_id)
+                    case _:
+                        raise NotImplementedError()
 
     def _load_roots(self):
         with open(self._path, "r") as file:
@@ -86,14 +94,14 @@ class Solution:
                 if project:
                     self._project_roots[project.guid] = project
 
-    def topsort(self) -> [bool, list[ProjectId]]:
+    def topsort(self) -> tuple[bool, list[ProjectId]]:
 
         class Mark(Enum):
             WHITE = 0
             GREY = enum.auto()
             BLACK = enum.auto()
 
-        marks = dict()
+        marks: dict[ProjectId, Mark] = dict()
         output = []
 
         def visit(project_id: ProjectId) -> Optional[list[ProjectId]]:
@@ -124,10 +132,10 @@ class Solution:
             if result is not None:
                 result.append(root_id)
                 result.reverse()
-                return [False, result]
+                return (False, result)
 
         output.reverse()
-        return [True, output]
+        return (True, output)
 
     def _scan_projects(self):
 
@@ -173,10 +181,10 @@ class Solution:
     def path(self):
         return self._path
 
-    def project_roots(self) -> Iterable[ProjectId]:
+    def project_roots(self) -> ValuesView[ProjectId]:
         return self._project_roots.values()
 
-    def projects(self) -> Iterable[ProjectId]:
+    def projects(self) -> ValuesView[Project]:
         return self._project_registry.values()
 
     @property
@@ -206,24 +214,29 @@ class Solution:
 
     def undeclared_projects(
             self
-    ) -> Iterable[tuple[ProjectId, list[ProjectId]]]:
+    ) -> Iterator[tuple[ProjectId, SetView[ProjectId]]]:
         for project, undeclared in self._project_undeclared.items():
-            yield (project, list(undeclared))
+            yield (project, SetView(undeclared))
 
-    def dangling_projects(self) -> Iterable[ProjectId]:
+    # _project_roots: dict[Guid, ProjectId]
+    # _project_registry: dict[Guid, Project]
+    # _project_undeclared: dict[ProjectId, set[ProjectId]]
+    # _project_dangling: dict[Guid, ProjectId]
+    # _assembly_dangling: dict[ProjectId, set[AssemblyId]]
+    # _source_dangling: dict[ProjectId, set[SourceId]]
+
+    def dangling_projects(self) -> ValuesView[ProjectId]:
         return self._project_dangling.values()
 
     def dangling_assemblies(
             self
-    ) -> Iterable[tuple[ProjectId, list[AssemblyId]]]:
-        for project, assembly_set in self._assembly_dangling.items():
-            yield (project, list(assembly_set))
+    ) -> MultiMapView[ProjectId, AssemblyId]:
+        return MultiMapView(self._assembly_dangling)
 
     def dangling_sources(
             self
-    ) -> Iterable[tuple[ProjectId, list[SourceId]]]:
-        for project, source_set in self._source_dangling.items():
-            yield (project, list(source_set))
+    ) -> MultiMapView[ProjectId, SourceId]:
+        return MultiMapView(self._source_dangling)
 
     # def __contains__(self, item: Guid | ProjectId) -> bool:
     #     guid = item.guid if isinstance(item, ProjectId) else item
@@ -234,5 +247,6 @@ class Solution:
 
     def __str__(self):
         return f"Solution({self.path})"
+
 
 __all__ = ["Solution"]

@@ -3,13 +3,16 @@ import re
 import xml.dom.minidom as xml
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import NewType, Optional, Union, TYPE_CHECKING
 
 from . import util
-
 from .id import AssemblyId, Guid, Name, ProjectId, SourceId
+from .var_env import VarEnv
 
+if TYPE_CHECKING:
+    from .project_registry import ProjectRegistry
 
 _path_has_leading_subst_regexp = re.compile(r"\$\([^\)]*\).*")
 
@@ -34,13 +37,39 @@ def _build_parse_assembly_name_regexp():
     return re.compile(r'\s*(?P<name>[^\s,]*)\s*,?')
 
 
+PropertyName = NewType("PropertyName", str)
+PropertyValue = NewType("PropertyValue", str)
+ProjectEnv = NewType("ProjectEnv", VarEnv[PropertyName, PropertyValue])
+
+
+@dataclass
+class ProjectLoadComplete:
+    project: "Project"
+
+
+@dataclass
+class ProjectLoadDangling:
+    backtrace: list[ProjectId]
+
+
+@dataclass
+class ProjectLoadCycle:
+    backtrace: list[ProjectId]
+
+
+ProjectLoadResult = Union[
+    ProjectLoadComplete,
+    ProjectLoadDangling,
+    ProjectLoadCycle
+]
+
+
 class Project:
 
     _project_ref_ids: dict[Guid, ProjectId]
     # note: we are not using is_nuget_assembly as a distinguishing factor
     _assembly_ref_ids: dict[Name, dict[Optional[Path], AssemblyId]]
     _source_ref_ids: dict[Path, SourceId]
-    _import_ids = dict[Guid, ProjectId]
 
     _PARSE_ASSEMBLY_NAME_REGEXP = _build_parse_assembly_name_regexp()
 
@@ -49,14 +78,13 @@ class Project:
         self._assembly_ref_ids = dict()
         self._project_ref_ids = dict()
         self._source_ref_ids = dict()
-        self._imports = dict()
         self._load()
 
     @classmethod
-    def load(cls, project_id: ProjectId) -> "Optional[Project]":
+    def load(cls, project_id: ProjectId) -> ProjectLoadResult:
         if not project_id.path.exists():
-            return None
-        return cls(project_id)
+            return ProjectLoadDangling([project_id])
+        return ProjectLoadComplete(cls(project_id))
 
     @property
     def project_id(self) -> ProjectId:
@@ -251,6 +279,18 @@ class Project:
             if source_id is not None:
                 self._add_source_id(source_id)
 
+    # def _find_import(self, root: xml.Element) -> Option[ProjectId]:
+    #     if not root.hasAttribute("Project"):
+    #         return None
+    #     path = self._normalize_relpath(root.getAttribute("Project"))
+    #     name = path.name
+
+    # def _find_imports(self, root: xml.Element): Iterable[ProjectId]
+    #     for import_ref in root.getElementsByTagName("Import"):
+    #         self._load_import_ref(import_ref)
+    #         if project_id is not None:
+    #             yield project_id
+
     def _load(self):
         with xml.parse(str(self._project_id.path)) as root:
             self._load_assembly_refs(root)
@@ -258,4 +298,8 @@ class Project:
             self._load_source_refs(root)
 
 
-__all__ = ["Project"]
+__all__ = [
+    "Project", "PropertyName", "PropertyValue", "ProjectEnv",
+    "ProjectLoadComplete", "ProjectLoadDangling", "ProjectLoadCycle",
+    "ProjectLoadResult"
+]
