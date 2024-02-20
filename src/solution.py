@@ -25,6 +25,15 @@ def _build_parse_project_regexp():
     return re.compile(''.join([prefix, name, sep, path, sep, guid]))
 
 
+def _multimap_insert(key, value, map):
+    if key in map:
+        value_set = map[key]
+    else:
+        value_set = set()
+        map[key] = value_set
+    value_set.add(value)
+
+
 class Solution:
 
     # TODO: track the source of the broken stuff
@@ -32,6 +41,8 @@ class Solution:
     _path: Path
     _project_roots: dict[Guid, ProjectId]
     _project_registry: dict[Guid, Project]
+    _project_parents: dict[ProjectId, set[ProjectId]]
+    _project_guid_duplicates: dict[ProjectId, set[ProjectId]]
     _project_undeclared: dict[ProjectId, set[ProjectId]]
     _project_dangling: dict[Guid, ProjectId]
     _assembly_dangling: dict[ProjectId, set[AssemblyId]]
@@ -43,6 +54,8 @@ class Solution:
         self._path = util.normalize_windows_path(path)
         self._project_roots = dict()
         self._project_registry = dict()
+        self._project_parents = dict()
+        self._project_guid_duplicates = dict()
         self._project_undeclared = dict()
         self._project_dangling = dict()
         self._assembly_dangling = dict()
@@ -70,12 +83,16 @@ class Solution:
         while len(stack) > 0:
             project_id = stack.pop()
             guid = project_id.guid
-            assert (
-                (project_id.guid not in self._project_registry) or
-                self._project_registry[project_id.guid].project_id == project_id
-            )
-            if not (guid in self._project_registry or
-                    guid in self._project_dangling):
+            if guid in self._project_registry:
+                other = self._project_registry[guid].project_id
+                if other != project_id:
+                    _multimap_insert(guid, other, self._project_guid_duplicates)
+                    _multimap_insert(
+                        guid,
+                        project_id,
+                        self._project_guid_duplicates
+                    )
+            elif guid not in self._project_dangling:
                 project = Project.load(project_id)
                 match project:
                     case ProjectLoadDangling(_):
@@ -83,6 +100,11 @@ class Solution:
                     case ProjectLoadComplete(project):
                         self._project_registry[guid] = project
                         for project_id in project.project_refs():
+                            _multimap_insert(
+                                project_id,
+                                project.project_id,
+                                self._project_parents
+                            )
                             stack.append(project_id)
                     case _:
                         raise NotImplementedError()
@@ -139,19 +161,11 @@ class Solution:
 
     def _scan_projects(self):
 
-        def multiset_insert(key, value, map):
-            if key in map:
-                value_set = map[key]
-            else:
-                value_set = set()
-                map[key] = value_set
-            value_set.add(value)
-
         for project in self._project_registry.values():
             project_id = project.project_id
             for subproject_id in project.project_refs():
                 if subproject_id.guid not in self._project_roots:
-                    multiset_insert(
+                    _multimap_insert(
                         project_id,
                         subproject_id,
                         self._project_undeclared
@@ -159,14 +173,14 @@ class Solution:
             for assembly in project.assembly_refs():
                 path = assembly.path
                 if path is not None and not path.exists():
-                    multiset_insert(
+                    _multimap_insert(
                         project_id,
                         assembly,
                         self._assembly_dangling
                     )
             for source in project.source_refs():
                 if not source.path.exists():
-                    multiset_insert(
+                    _multimap_insert(
                         project_id,
                         source,
                         self._source_dangling
@@ -184,17 +198,25 @@ class Solution:
     def project_roots(self) -> ValuesView[ProjectId]:
         return self._project_roots.values()
 
+    def project_parents(self) -> MultiMapView[ProjectId, ProjectId]:
+        return MultiMapView(self._project_parents)
+
     def projects(self) -> ValuesView[Project]:
         return self._project_registry.values()
 
     @property
     def is_broken(self) -> bool:
         return (
+            self.has_duplicated_guids or
             self.has_undeclared_projects or
             self.has_dangling_projects or
             self.has_dangling_assemblies or
             self.has_dangling_sources
         )
+
+    @property
+    def has_duplicated_guids(self) -> bool:
+        return len(self._project_guid_duplicates) > 0
 
     @property
     def has_undeclared_projects(self) -> bool:
@@ -212,6 +234,10 @@ class Solution:
     def has_dangling_sources(self) -> bool:
         return len(self._source_dangling) > 0
 
+    def duplicated_guids(self) -> MultiMapView[Guid, ProjectId]:
+        return MultiMapView(self._project_guid_duplicates)
+
+        _project_guid_duplicates: set[ProjectId]
     def undeclared_projects(
             self
     ) -> Iterator[tuple[ProjectId, SetView[ProjectId]]]:
