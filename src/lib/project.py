@@ -7,7 +7,7 @@ from collections.abc import Iterator, ValuesView
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import NewType, Optional, Union, TYPE_CHECKING
+from typing import Generic, NewType, Optional, Union, TypeVar, TYPE_CHECKING
 
 from . import util
 from .data_view import SequenceView
@@ -45,9 +45,12 @@ PropertyValue = NewType("PropertyValue", str)
 ProjectEnv = NewType("ProjectEnv", VarEnv[PropertyName, PropertyValue])
 
 
+_PLO_T = TypeVar("_PLO_T")
+
+
 @dataclass
-class ProjectLoadComplete:
-    project: "Project"
+class ProjectLoadOk(Generic[_PLO_T]):
+    project: _PLO_T
 
 
 @dataclass
@@ -60,8 +63,11 @@ class ProjectLoadCycle:
     backtrace: list[SimpleProjectId]
 
 
+_PLR_T = TypeVar("_PLR_T")
+
+
 ProjectLoadResult = Union[
-    ProjectLoadComplete,
+    ProjectLoadOk[_PLR_T],
     ProjectLoadDangling,
     ProjectLoadCycle
 ]
@@ -123,23 +129,27 @@ class Project:
 
     _PARSE_ASSEMBLY_NAME_REGEXP = _build_parse_assembly_name_regexp()
 
-    def __init__(self, project_id: SimpleProjectId):
+    def __init__(
+            self,
+            registry: "ProjectRegistry",
+            project_id: SimpleProjectId
+    ):
         self._project_id = project_id
         self._assembly_ref_ids = dict()
         self._project_ref_ids = dict()
         self._source_ref_ids = dict()
         self._prop_groups = list()
-        self._load()
 
     @classmethod
     def load(
             cls,
             registry: "ProjectRegistry",
             project_id: SimpleProjectId
-    ) -> ProjectLoadResult:
+    ) -> "ProjectLoadResult[Project]":
         if not project_id.path.exists():
             return ProjectLoadDangling([project_id])
-        return ProjectLoadComplete(cls(project_id))
+        project = cls(registry, project_id)
+        return project._load(registry)
 
     @property
     def project_id(self) -> SimpleProjectId:
@@ -258,7 +268,7 @@ class Project:
 
         return AssemblyId(Name(name), path, is_nuget_assembly)
 
-    def _load_assembly_refs(self, root: xml.Element):
+    def _load_assembly_refs(self, root: xml.Document):
         for assembly_ref in root.getElementsByTagName("Reference"):
             assembly_id = self._load_assembly_ref(assembly_ref)
             if assembly_id is not None:
@@ -280,8 +290,9 @@ class Project:
 
     def _load_project_ref(
             self,
+            registry: "ProjectRegistry",
             project_ref: xml.Element
-    ) -> Optional[tuple[Guid, SimpleProjectId]]:
+    ) -> Optional[ProjectLoadResult[tuple[Guid, SimpleProjectId]]]:
         if not project_ref.hasAttribute("Include"):
             return None
 
@@ -303,14 +314,24 @@ class Project:
         guid = guid.lstrip("{").rstrip("}")
         path = self._normalize_relpath(project_ref.getAttribute("Include"))
 
-        return (Guid(guid), SimpleProjectId(name, path))
+        return ProjectLoadOk((Guid(guid), SimpleProjectId(name, path)))
 
-    def _load_project_refs(self, root: xml.Element):
+    def _load_project_refs(
+            self,
+            registry: "ProjectRegistry",
+            root: xml.Document
+    ) -> ProjectLoadResult[None]:
         for project_ref in root.getElementsByTagName("ProjectReference"):
-            result = self._load_project_ref(project_ref)
+            result = self._load_project_ref(registry, project_ref)
             if result is not None:
-                guid, project_id = result
-                self._add_project_id(guid, project_id)
+                match result:
+                    case ProjectLoadOk((guid, project_id)):
+                        self._add_project_id(guid, project_id)
+                    case ProjectLoadDangling(backtrace):
+                        return ProjectLoadDangling(backtrace)
+                    case ProjectLoadCycle(backtrace):
+                        return ProjectLoadCycle(backtrace)
+        return ProjectLoadOk(None)
 
     def _add_source_id(self, source_id: SourceId):
         path = source_id.path
@@ -334,7 +355,7 @@ class Project:
         name = path.name
         return SourceId(name, path)
 
-    def _load_source_refs(self, root: xml.Element):
+    def _load_source_refs(self, root: xml.Document):
         for source_ref in root.getElementsByTagName("Compile"):
             source_id = self._load_source_ref(source_ref)
             if source_id is not None:
@@ -371,7 +392,7 @@ class Project:
         output_path = self._normalize_relpath(output_path_string)
         return ProjectPropGroup(output_type, output_path, assembly_name)
 
-    def _load_prop_groups(self, root: xml.Element):
+    def _load_prop_groups(self, root: xml.Document):
         for prop_node in root.getElementsByTagName("PropertyGroup"):
             prop_group = self._load_prop_group(prop_node)
             if prop_group is not None:
@@ -389,16 +410,23 @@ class Project:
     #         if project_id is not None:
     #             yield project_id
 
-    def _load(self):
+    def _load(self, registry: "ProjectRegistry") -> "ProjectLoadResult[Project]":
         with xml.parse(str(self._project_id.path)) as root:
             self._load_assembly_refs(root)
-            self._load_project_refs(root)
+            match self._load_project_refs(registry, root):
+                case ProjectLoadDangling(backtrace):
+                    return ProjectLoadDangling(backtrace)
+                case ProjectLoadCycle(backtrace):
+                    return ProjectLoadCycle(backtrace)
+                case ProjectLoadOk(_):
+                    pass
             self._load_source_refs(root)
             self._load_prop_groups(root)
+        return ProjectLoadOk(self)
 
 
 __all__ = [
     "Project", "PropertyName", "PropertyValue", "ProjectEnv",
-    "ProjectLoadComplete", "ProjectLoadDangling", "ProjectLoadCycle",
+    "ProjectLoadOk", "ProjectLoadDangling", "ProjectLoadCycle",
     "ProjectLoadResult", "ProjectPropGroup", "OutputType"
 ]

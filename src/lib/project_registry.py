@@ -5,7 +5,7 @@ from .id import SimpleProjectId
 from .project import (
     Project,
     ProjectLoadResult,
-    ProjectLoadComplete, ProjectLoadDangling, ProjectLoadCycle
+    ProjectLoadOk, ProjectLoadDangling, ProjectLoadCycle
 )
 
 
@@ -28,10 +28,10 @@ class ProjectRegistry:
         self._project_dangling = set()
         self._project_loading = set()
 
-    def load(self, project_id: SimpleProjectId) -> ProjectLoadResult:
+    def load(self, project_id: SimpleProjectId) -> ProjectLoadResult[Project]:
 
         if project_id in self._project_complete:
-            return ProjectLoadComplete(self._project_complete[project_id])
+            return ProjectLoadOk(self._project_complete[project_id])
         if project_id in self._project_dangling:
             return ProjectLoadDangling([project_id])
         if project_id in self._project_loading:
@@ -45,9 +45,9 @@ class ProjectRegistry:
             self._project_loading.remove(project_id)
 
         match result:
-            case ProjectLoadComplete(project):
+            case ProjectLoadOk(project):
                 self._project_complete[project_id] = project
-                return ProjectLoadComplete(project)
+                return ProjectLoadOk(project)
             case ProjectLoadDangling(backtrace):
                 self._project_dangling.add(project_id)
                 backtrace.append(project_id)

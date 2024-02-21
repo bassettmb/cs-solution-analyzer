@@ -19,7 +19,7 @@ from .multimap import (
 )
 from .project import (
     Project,
-    ProjectLoadComplete, ProjectLoadDangling, ProjectLoadCycle,
+    ProjectLoadOk, ProjectLoadDangling, ProjectLoadCycle,
     ProjectLoadResult
 )
 from .project_registry import ProjectRegistry
@@ -54,7 +54,7 @@ class Solution:
 
     def __init__(self, path: str | Path):
         self._path = util.normalize_windows_path(path)
-        self._registry = None
+        self._registry = ProjectRegistry()
         self._project_guids = dict()
         self._project_roots = dict()
         self._project_registry = dict()
@@ -97,7 +97,7 @@ class Solution:
                 match project:
                     case ProjectLoadDangling(_):
                         self._project_dangling[guid] = project_id
-                    case ProjectLoadComplete(project):
+                    case ProjectLoadOk(project):
                         self._project_registry[guid] = project
                         for project_id in project.project_refs():
                             self._project_parents.add(project_id, project.project_id)
