@@ -2,7 +2,7 @@ import os
 import subprocess
 
 from .get_args import get_args
-from .solution import Solution
+from .lib.solution import Solution
 
 
 def run_find(*args, **kwargs):

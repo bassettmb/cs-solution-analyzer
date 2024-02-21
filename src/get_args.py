@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import util
+from .lib import util
 
 
 @dataclass
