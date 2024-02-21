@@ -2,9 +2,14 @@ import enum
 import re
 
 from enum import Enum
-from collections.abc import Iterable, Iterator, Mapping, Set, ValuesView
+from collections.abc import (
+    Iterable, Iterator,
+    MutableMapping, MutableSet,
+    Mapping, Set,
+    ValuesView
+)
 from pathlib import Path
-from typing import Optional
+from typing import Generic, Optional, TypeVar
 
 from . import util
 from .id import AssemblyId, Guid, ProjectId, SourceId
@@ -25,7 +30,15 @@ def _build_parse_project_regexp():
     return re.compile(''.join([prefix, name, sep, path, sep, guid]))
 
 
-def _multimap_insert(key, value, map):
+_MM_I_K = TypeVar("_MM_I_K")
+_MM_I_V = TypeVar("_MM_I_V")
+
+
+def _multimap_insert(
+        key: _MM_I_K,
+        value: _MM_I_V,
+        map: MutableMapping[_MM_I_K, MutableSet[_MM_I_V]]
+):
     if key in map:
         value_set = map[key]
     else:
@@ -93,7 +106,7 @@ class Solution:
                         self._project_guid_duplicates
                     )
             elif guid not in self._project_dangling:
-                project = Project.load(project_id)
+                project = Project.load(None, project_id)
                 match project:
                     case ProjectLoadDangling(_):
                         self._project_dangling[guid] = project_id
@@ -234,7 +247,7 @@ class Solution:
     def has_dangling_sources(self) -> bool:
         return len(self._source_dangling) > 0
 
-    def duplicated_guids(self) -> MultiMapView[Guid, ProjectId]:
+    def duplicated_guids(self) -> MultiMapView[ProjectId, ProjectId]:
         return MultiMapView(self._project_guid_duplicates)
 
         _project_guid_duplicates: set[ProjectId]

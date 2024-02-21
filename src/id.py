@@ -2,7 +2,25 @@ from pathlib import Path
 from typing import NewType, Optional
 
 
-Guid = NewType("Guid", str)
+class Guid:
+
+    def __init__(self, raw: str):
+        self._raw = raw.upper()
+
+    @property
+    def raw(self) -> str:
+        return self._raw
+
+    def __hash__(self) -> int:
+        return hash(self._raw)
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, Guid) and self._raw == other._raw
+
+    def __str__(self) -> str:
+        return self._raw
+
+
 Name = NewType("Name", str)
 
 

@@ -3,7 +3,7 @@ import re
 
 import xml.dom.minidom as xml
 
-from collections.abc import ValuesView
+from collections.abc import Iterator, ValuesView
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -131,7 +131,7 @@ class Project:
         self._load()
 
     @classmethod
-    def load(cls, project_id: ProjectId) -> ProjectLoadResult:
+    def load(cls, registry: "ProjectRegistry", project_id: ProjectId) -> ProjectLoadResult:
         if not project_id.path.exists():
             return ProjectLoadDangling([project_id])
         return ProjectLoadComplete(cls(project_id))
@@ -140,7 +140,7 @@ class Project:
     def project_id(self) -> ProjectId:
         return self._project_id
 
-    def assembly_refs(self) -> ValuesView[AssemblyId]:
+    def assembly_refs(self) -> Iterator[AssemblyId]:
         for path_map in self._assembly_ref_ids.values():
             for assembly_id in path_map.values():
                 yield assembly_id
