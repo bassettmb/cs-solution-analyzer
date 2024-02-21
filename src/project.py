@@ -1,13 +1,16 @@
+import enum
 import re
 
 import xml.dom.minidom as xml
 
-from collections.abc import Iterable
+from collections.abc import ValuesView
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import NewType, Optional, Union, TYPE_CHECKING
 
 from . import util
+from .data_view import SequenceView
 from .id import AssemblyId, Guid, Name, ProjectId, SourceId
 from .var_env import VarEnv
 
@@ -64,12 +67,58 @@ ProjectLoadResult = Union[
 ]
 
 
+class OutputType(Enum):
+    EXE = 0
+    LIB = enum.auto()
+
+    @classmethod
+    def from_string(self, string_repr: str) -> "Optional[OutputType]":
+        match string_repr.upper():
+            case "EXE" | "WINEXE": return self.EXE
+            case "LIBRARY": return self.LIB
+            case _: return None
+
+
+class ProjectPropGroup:
+
+    def __init__(
+            self,
+            output_type: OutputType,
+            output_path: Path,
+            assembly_name: str
+    ):
+        self._assembly_name = assembly_name
+        self._output_path = output_path
+        self._output_type = output_type
+
+    @property
+    def assembly_name(self) -> str:
+        return self._assembly_name
+
+    @property
+    def output_path(self) -> Path:
+        return self._output_path
+
+    @property
+    def output_type(self) -> OutputType:
+        return self._output_type
+
+    def __str__(self) -> str:
+        return "".join([
+            "SolutionPropGroup(",
+            f"{self.output_type}, ",
+            f"{self.output_path}, ",
+            f"{self.assembly_name})"
+        ])
+
+
 class Project:
 
     _project_ref_ids: dict[Guid, ProjectId]
     # note: we are not using is_nuget_assembly as a distinguishing factor
     _assembly_ref_ids: dict[Name, dict[Optional[Path], AssemblyId]]
     _source_ref_ids: dict[Path, SourceId]
+    _prop_groups: list[ProjectPropGroup]
 
     _PARSE_ASSEMBLY_NAME_REGEXP = _build_parse_assembly_name_regexp()
 
@@ -78,6 +127,7 @@ class Project:
         self._assembly_ref_ids = dict()
         self._project_ref_ids = dict()
         self._source_ref_ids = dict()
+        self._prop_groups = list()
         self._load()
 
     @classmethod
@@ -90,16 +140,19 @@ class Project:
     def project_id(self) -> ProjectId:
         return self._project_id
 
-    def assembly_refs(self) -> Iterable[AssemblyId]:
+    def assembly_refs(self) -> ValuesView[AssemblyId]:
         for path_map in self._assembly_ref_ids.values():
             for assembly_id in path_map.values():
                 yield assembly_id
 
-    def project_refs(self) -> Iterable[ProjectId]:
+    def project_refs(self) -> ValuesView[ProjectId]:
         return self._project_ref_ids.values()
 
-    def source_refs(self) -> Iterable[SourceId]:
+    def source_refs(self) -> ValuesView[SourceId]:
         return self._source_ref_ids.values()
+
+    def prop_groups(self) -> SequenceView[ProjectPropGroup]:
+        return SequenceView(self._prop_groups)
 
     def _normalize_relpath(self, path: str | Path) -> Path:
         context = self.project_id.path.parent
@@ -279,6 +332,43 @@ class Project:
             if source_id is not None:
                 self._add_source_id(source_id)
 
+    def _add_prop_group(self, prop_group: ProjectPropGroup):
+        self._prop_groups.append(prop_group)
+
+    def _load_prop_group(
+            self,
+            root: xml.Element
+    ) -> Optional[ProjectPropGroup]:
+        assembly_name = None
+        output_path_string = None
+        output_type_string = None
+        for child in root.childNodes:
+            if child.nodeType == xml.Node.ELEMENT_NODE:
+                match child.tagName:
+                    case "AssemblyName":
+                        assembly_name = _get_xml_text(child)
+                    case "OutputPath":
+                        output_path_string = _get_xml_text(child)
+                    case "OutputType":
+                        output_type_string = _get_xml_text(child)
+        if (
+                assembly_name is None or
+                output_path_string is None or
+                output_type_string is None
+        ):
+            return None
+        output_type = OutputType.from_string(output_type_string)
+        if output_type is None:
+            return None
+        output_path = self._normalize_relpath(output_path_string)
+        return ProjectPropGroup(output_type, output_path, assembly_name)
+
+    def _load_prop_groups(self, root: xml.Element):
+        for prop_node in root.getElementsByTagName("PropertyGroup"):
+            prop_group = self._load_prop_group(prop_node)
+            if prop_group is not None:
+                self._add_prop_group(prop_group)
+
     # def _find_import(self, root: xml.Element) -> Option[ProjectId]:
     #     if not root.hasAttribute("Project"):
     #         return None
@@ -296,10 +386,11 @@ class Project:
             self._load_assembly_refs(root)
             self._load_project_refs(root)
             self._load_source_refs(root)
+            self._load_prop_groups(root)
 
 
 __all__ = [
     "Project", "PropertyName", "PropertyValue", "ProjectEnv",
     "ProjectLoadComplete", "ProjectLoadDangling", "ProjectLoadCycle",
-    "ProjectLoadResult"
+    "ProjectLoadResult", "ProjectPropGroup", "OutputType"
 ]
