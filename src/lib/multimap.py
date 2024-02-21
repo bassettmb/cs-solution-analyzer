@@ -5,7 +5,7 @@ from collections.abc import (
 )
 from typing import Generic, Optional, TypeVar, overload
 
-from .data_view import MultiMapView, SetView
+from .data_view import SetView
 
 
 _MMVV_V = TypeVar("_MMVV_V", bound=Hashable)
@@ -55,7 +55,7 @@ class MultiMap(Generic[_MM_K, _MM_V]):
 
     _data: dict[_MM_K, set[_MM_V]]
 
-    def __init__(self, items: Optional[Iterable[tuple[_MM_K, _MM_V]]]):
+    def __init__(self, items: Optional[Iterable[tuple[_MM_K, _MM_V]]] = None):
         self._data = dict()
         if items is not None:
             for (key, value) in items:
@@ -126,4 +126,26 @@ class MultiMap(Generic[_MM_K, _MM_V]):
         return MultiMapItemsView(self._data.items())
 
 
-__all__ = ["MultiMap", "MultiMapValuesView", "MultiMapItemsView"]
+_MMV_K = TypeVar("_MMV_K", bound=Hashable)
+_MMV_V = TypeVar("_MMV_V", bound=Hashable)
+
+
+class MultiMapView(Mapping[_MMV_K, SetView[_MMV_V]]):
+
+    def __init__(self, data: MultiMap[_MMV_K, _MMV_V]):
+        self._data = data
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __getitem__(self, key: _MMV_K) -> SetView[_MMV_V]:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[_MMV_K]:
+        return iter(self._data)
+
+
+__all__ = [
+    "MultiMap", "MultiMapView",
+    "MultiMapValuesView", "MultiMapItemsView"
+]

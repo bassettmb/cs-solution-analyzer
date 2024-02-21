@@ -13,12 +13,16 @@ from typing import Generic, Optional, TypeVar
 
 from . import util
 from .id import AssemblyId, Guid, ProjectId, SourceId
-from .data_view import (MultiMapView, SetView)
+from .data_view import SetView
+from .multimap import (
+    MultiMap, MultiMapView, MultiMapItemsView, MultiMapValuesView
+)
 from .project import (
     Project,
     ProjectLoadComplete, ProjectLoadDangling, ProjectLoadCycle,
     ProjectLoadResult
 )
+from .project_registry import ProjectRegistry
 
 
 def _build_parse_project_regexp():
@@ -30,49 +34,36 @@ def _build_parse_project_regexp():
     return re.compile(''.join([prefix, name, sep, path, sep, guid]))
 
 
-_MM_I_K = TypeVar("_MM_I_K")
-_MM_I_V = TypeVar("_MM_I_V")
-
-
-def _multimap_insert(
-        key: _MM_I_K,
-        value: _MM_I_V,
-        map: MutableMapping[_MM_I_K, MutableSet[_MM_I_V]]
-):
-    if key in map:
-        value_set = map[key]
-    else:
-        value_set = set()
-        map[key] = value_set
-    value_set.add(value)
-
-
 class Solution:
 
     # TODO: track the source of the broken stuff
 
     _path: Path
+    _registry: ProjectRegistry
+    _project_guids: dict[Guid, ProjectId]
     _project_roots: dict[Guid, ProjectId]
     _project_registry: dict[Guid, Project]
-    _project_parents: dict[ProjectId, set[ProjectId]]
-    _project_guid_duplicates: dict[ProjectId, set[ProjectId]]
-    _project_undeclared: dict[ProjectId, set[ProjectId]]
+    _project_parents: MultiMap[ProjectId, ProjectId]
+    _project_guid_duplicates: MultiMap[Guid, ProjectId]
+    _project_undeclared: MultiMap[ProjectId, ProjectId]
     _project_dangling: dict[Guid, ProjectId]
-    _assembly_dangling: dict[ProjectId, set[AssemblyId]]
-    _source_dangling: dict[ProjectId, set[SourceId]]
+    _assembly_dangling: MultiMap[ProjectId, AssemblyId]
+    _source_dangling: MultiMap[ProjectId, SourceId]
 
     _PARSE_PROJECT_REGEXP = _build_parse_project_regexp()
 
     def __init__(self, path: str | Path):
         self._path = util.normalize_windows_path(path)
+        self._registry = None
+        self._project_guids = dict()
         self._project_roots = dict()
         self._project_registry = dict()
-        self._project_parents = dict()
-        self._project_guid_duplicates = dict()
-        self._project_undeclared = dict()
+        self._project_parents = MultiMap()
+        self._project_guid_duplicates = MultiMap()
+        self._project_undeclared = MultiMap()
         self._project_dangling = dict()
-        self._assembly_dangling = dict()
-        self._source_dangling = dict()
+        self._assembly_dangling = MultiMap()
+        self._source_dangling = MultiMap()
         self._load()
 
     def _parse_project(self, line):
@@ -99,25 +90,17 @@ class Solution:
             if guid in self._project_registry:
                 other = self._project_registry[guid].project_id
                 if other != project_id:
-                    _multimap_insert(guid, other, self._project_guid_duplicates)
-                    _multimap_insert(
-                        guid,
-                        project_id,
-                        self._project_guid_duplicates
-                    )
+                    self._project_guid_duplicates.add(guid, other)
+                    self._project_guid_duplicates.add(guid, project_id)
             elif guid not in self._project_dangling:
-                project = Project.load(None, project_id)
+                project = Project.load(self._registry, project_id)
                 match project:
                     case ProjectLoadDangling(_):
                         self._project_dangling[guid] = project_id
                     case ProjectLoadComplete(project):
                         self._project_registry[guid] = project
                         for project_id in project.project_refs():
-                            _multimap_insert(
-                                project_id,
-                                project.project_id,
-                                self._project_parents
-                            )
+                            self._project_parents.add(project_id, project.project_id)
                             stack.append(project_id)
                     case _:
                         raise NotImplementedError()
@@ -178,26 +161,14 @@ class Solution:
             project_id = project.project_id
             for subproject_id in project.project_refs():
                 if subproject_id.guid not in self._project_roots:
-                    _multimap_insert(
-                        project_id,
-                        subproject_id,
-                        self._project_undeclared
-                    )
+                    self._project_undeclared.add(project_id, subproject_id)
             for assembly in project.assembly_refs():
                 path = assembly.path
                 if path is not None and not path.exists():
-                    _multimap_insert(
-                        project_id,
-                        assembly,
-                        self._assembly_dangling
-                    )
+                    self._assembly_dangling.add(project_id, assembly)
             for source in project.source_refs():
                 if not source.path.exists():
-                    _multimap_insert(
-                        project_id,
-                        source,
-                        self._source_dangling
-                    )
+                    self._source_dangling.add(project_id, source)
 
     def _load(self):
         self._load_roots()
@@ -247,10 +218,9 @@ class Solution:
     def has_dangling_sources(self) -> bool:
         return len(self._source_dangling) > 0
 
-    def duplicated_guids(self) -> MultiMapView[ProjectId, ProjectId]:
+    def duplicated_guids(self) -> MultiMapView[Guid, ProjectId]:
         return MultiMapView(self._project_guid_duplicates)
 
-        _project_guid_duplicates: set[ProjectId]
     def undeclared_projects(
             self
     ) -> Iterator[tuple[ProjectId, SetView[ProjectId]]]:

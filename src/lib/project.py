@@ -11,7 +11,7 @@ from typing import NewType, Optional, Union, TYPE_CHECKING
 
 from . import util
 from .data_view import SequenceView
-from .id import AssemblyId, Guid, Name, ProjectId, SourceId
+from .id import AssemblyId, Guid, Name, SimpleProjectId, ProjectId, SourceId
 from .var_env import VarEnv
 
 if TYPE_CHECKING:
@@ -52,12 +52,12 @@ class ProjectLoadComplete:
 
 @dataclass
 class ProjectLoadDangling:
-    backtrace: list[ProjectId]
+    backtrace: list[SimpleProjectId]
 
 
 @dataclass
 class ProjectLoadCycle:
-    backtrace: list[ProjectId]
+    backtrace: list[SimpleProjectId]
 
 
 ProjectLoadResult = Union[
@@ -114,7 +114,8 @@ class ProjectPropGroup:
 
 class Project:
 
-    _project_ref_ids: dict[Guid, ProjectId]
+    _project_id: SimpleProjectId
+    _project_ref_ids: dict[Guid, SimpleProjectId]
     # note: we are not using is_nuget_assembly as a distinguishing factor
     _assembly_ref_ids: dict[Name, dict[Optional[Path], AssemblyId]]
     _source_ref_ids: dict[Path, SourceId]
@@ -122,7 +123,7 @@ class Project:
 
     _PARSE_ASSEMBLY_NAME_REGEXP = _build_parse_assembly_name_regexp()
 
-    def __init__(self, project_id: ProjectId):
+    def __init__(self, project_id: SimpleProjectId):
         self._project_id = project_id
         self._assembly_ref_ids = dict()
         self._project_ref_ids = dict()
@@ -131,13 +132,17 @@ class Project:
         self._load()
 
     @classmethod
-    def load(cls, registry: "ProjectRegistry", project_id: ProjectId) -> ProjectLoadResult:
+    def load(
+            cls,
+            registry: "ProjectRegistry",
+            project_id: SimpleProjectId
+    ) -> ProjectLoadResult:
         if not project_id.path.exists():
             return ProjectLoadDangling([project_id])
         return ProjectLoadComplete(cls(project_id))
 
     @property
-    def project_id(self) -> ProjectId:
+    def project_id(self) -> SimpleProjectId:
         return self._project_id
 
     def assembly_refs(self) -> Iterator[AssemblyId]:
@@ -145,8 +150,11 @@ class Project:
             for assembly_id in path_map.values():
                 yield assembly_id
 
-    def project_refs(self) -> ValuesView[ProjectId]:
-        return self._project_ref_ids.values()
+    def project_refs(self) -> set[ProjectId]:
+        project_refs = set()
+        for guid, simple_ref in self._project_ref_ids.items():
+            project_refs.add(ProjectId(simple_ref.name, simple_ref.path, guid))
+        return project_refs
 
     def source_refs(self) -> ValuesView[SourceId]:
         return self._source_ref_ids.values()
@@ -256,8 +264,7 @@ class Project:
             if assembly_id is not None:
                 self._add_assembly_id(assembly_id)
 
-    def _add_project_id(self, project_id: ProjectId):
-        guid = project_id.guid
+    def _add_project_id(self, guid: Guid, project_id: SimpleProjectId):
         if guid not in self._project_ref_ids:
             self._project_ref_ids[guid] = project_id
         else:
@@ -274,7 +281,7 @@ class Project:
     def _load_project_ref(
             self,
             project_ref: xml.Element
-    ) -> Optional[ProjectId]:
+    ) -> Optional[tuple[Guid, SimpleProjectId]]:
         if not project_ref.hasAttribute("Include"):
             return None
 
@@ -296,13 +303,14 @@ class Project:
         guid = guid.lstrip("{").rstrip("}")
         path = self._normalize_relpath(project_ref.getAttribute("Include"))
 
-        return ProjectId(name, path, Guid(guid))
+        return (Guid(guid), SimpleProjectId(name, path))
 
     def _load_project_refs(self, root: xml.Element):
         for project_ref in root.getElementsByTagName("ProjectReference"):
-            project_id = self._load_project_ref(project_ref)
-            if project_id is not None:
-                self._add_project_id(project_id)
+            result = self._load_project_ref(project_ref)
+            if result is not None:
+                guid, project_id = result
+                self._add_project_id(guid, project_id)
 
     def _add_source_id(self, source_id: SourceId):
         path = source_id.path

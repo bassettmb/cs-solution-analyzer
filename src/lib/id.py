@@ -65,12 +65,11 @@ class AssemblyId:
         ])
 
 
-class ProjectId:
+class SimpleProjectId:
 
-    def __init__(self, name: str, path: str | Path, guid: Guid):
+    def __init__(self, name: str, path: str | Path):
         self._name = name
         self._path = Path(path)
-        self._guid = guid
 
     @property
     def name(self):
@@ -80,20 +79,49 @@ class ProjectId:
     def path(self):
         return self._path
 
-    @property
-    def guid(self):
-        return self._guid
-
-    def __eq__(self, other) -> bool:
+    def _structural_eq(self, other) -> bool:
         return (
-            isinstance(other, ProjectId) and
-            self._guid == other._guid and
             self._name == other._name and
             self._path == other._path
         )
 
+    def __eq__(self, other) -> bool:
+        return (
+            isinstance(other, SimpleProjectId) and
+            self._structural_eq(other)
+        )
+
     def __hash__(self) -> int:
-        return hash((self._name, self._path, self._guid))
+        return hash((self._name, self._path))
+
+    def __str__(self):
+        return f"SimpleProjectId({self.name}, {self.path})"
+
+
+class ProjectId(SimpleProjectId):
+
+    def __init__(self, name: str, path: str | Path, guid: Guid):
+        super().__init__(name, path)
+        self._guid = guid
+
+    @property
+    def guid(self):
+        return self._guid
+
+    def _structural_eq(self, other) -> bool:
+        return (
+            super()._structural_eq(other) and
+            self._guid == other._guid
+        )
+
+    def __eq__(self, other) -> bool:
+        return (
+            isinstance(other, ProjectId) and
+            self._structural_eq(other)
+        )
+
+    def __hash__(self) -> int:
+        return hash((super().__hash__(), self._guid))
 
     def __str__(self):
         return f"ProjectId({self.name}, {self.path}, {self.guid})"

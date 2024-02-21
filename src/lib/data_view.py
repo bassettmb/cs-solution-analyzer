@@ -21,25 +21,6 @@ class MapView(Mapping[_K1, _V1]):
         return iter(self._data)
 
 
-_K2 = TypeVar("_K2")
-_V2 = TypeVar("_V2")
-
-
-class MultiMapView(Mapping[_K2, "SetView[_V2]"]):
-
-    def __init__(self, data: Mapping[_K2, Set[_V2]]):
-        self._data = data
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __getitem__(self, key: _K2) -> "SetView[_V2]":
-        return SetView(self._data[key])
-
-    def __iter__(self) -> Iterator[_K2]:
-        return iter(self._data)
-
-
 _V3 = TypeVar("_V3")
 
 
@@ -94,4 +75,4 @@ class SetView(Set[_V4]):
         return iter(self._data)
 
 
-__all__ = ["MapView", "MultiMapView", "SequenceView", "SetView"]
+__all__ = ["MapView", "SequenceView", "SetView"]
