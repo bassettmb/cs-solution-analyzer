@@ -4,7 +4,7 @@ import string
 from dataclasses import dataclass
 
 from enum import Enum
-from collections.abc import Hashable, Iterable, Iterator
+from collections.abc import Callable, Hashable, Iterable, Iterator
 from typing import Generic, Optional, TypeVar, Union
 
 
@@ -25,7 +25,7 @@ class Err(Generic[_PE_A]):
 
 
 _PR_A = TypeVar("_PR_A")
-_PR_E = Typevar("_PR_E")
+_PR_E = TypeVar("_PR_E")
 
 
 Result = Union[Ok[_PR_A], Err[_PR_E]]
@@ -36,6 +36,7 @@ _LA_T = TypeVar("_LA_T")
 
 class Lookahead(Generic[_LA_T]):
 
+    _it: Iterator[_LA_T]
     _done: bool
     _next: _LA_T
 
@@ -59,9 +60,6 @@ class Lookahead(Generic[_LA_T]):
         except StopIteration:
             self._done = True
         return not self._done
-
-
-iter = Lookahead(input)
 
 
 def takewhile(pred: Callable[[str], bool], source: Lookahead[str]) -> str:
