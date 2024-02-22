@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Generic, Optional, TypeVar
 
 from . import util
-from .id import AssemblyId, Guid, ProjectId, SimpleProjectId, SourceId
+from .id import AssemblyId, Guid, ProjectId, ProjectId, SourceId
 from .data_view import SetView
 from .multimap import (
     MultiMap, MultiMapView, MultiMapItemsView, MultiMapValuesView
@@ -41,16 +41,16 @@ class Solution:
     _path: Path
     _registry: ProjectRegistry
 
-    _project_guids: MultiMap[SimpleProjectId, Guid]
-    _project_roots: set[SimpleProjectId]
+    _project_guids: MultiMap[ProjectId, Guid]
+    _project_roots: set[ProjectId]
 
-    _project_cyclic: set[SimpleProjectId]
+    _project_cyclic: set[ProjectId]
 
-    _project_parents: MultiMap[SimpleProjectId, SimpleProjectId]
-    _project_undeclared: MultiMap[SimpleProjectId, SimpleProjectId]
-    _assembly_dangling: MultiMap[SimpleProjectId, AssemblyId]
-    _source_dangling: MultiMap[SimpleProjectId, SourceId]
-    _duplicated_guids: MultiMap[Guid, SimpleProjectId]
+    _project_parents: MultiMap[ProjectId, ProjectId]
+    _project_undeclared: MultiMap[ProjectId, ProjectId]
+    _assembly_dangling: MultiMap[ProjectId, AssemblyId]
+    _source_dangling: MultiMap[ProjectId, SourceId]
+    _duplicated_guids: MultiMap[Guid, ProjectId]
 
     _PARSE_PROJECT_REGEXP = _build_parse_project_regexp()
 
@@ -72,7 +72,7 @@ class Solution:
 
         self._load()
 
-    def _parse_project(self, line) -> Optional[tuple[Guid, SimpleProjectId]]:
+    def _parse_project(self, line) -> Optional[tuple[Guid, ProjectId]]:
 
         match = self._PARSE_PROJECT_REGEXP.match(line)
         if match is None:
@@ -83,7 +83,7 @@ class Solution:
 
         repo_path = util.normalize_windows_relpath(self.path.parent, path)
 
-        return (Guid(guid), SimpleProjectId(name, repo_path))
+        return (Guid(guid), ProjectId(name, repo_path))
 
     def _load_projects(self):
         stack = list(self._project_roots)
@@ -111,20 +111,20 @@ class Solution:
                     self._project_guids.add(project_id, guid)
                     self._project_roots.add(project_id)
 
-    def topsort(self) -> tuple[bool, list[SimpleProjectId]]:
+    def topsort(self) -> tuple[bool, list[ProjectId]]:
 
         class Mark(Enum):
             WHITE = 0
             GREY = enum.auto()
             BLACK = enum.auto()
 
-        marks: dict[SimpleProjectId, Mark] = dict()
+        marks: dict[ProjectId, Mark] = dict()
         output = []
 
         complete = self._registry.complete()
         dangling = self._registry.dangling()
 
-        def visit(project_id: SimpleProjectId) -> Optional[list[SimpleProjectId]]:
+        def visit(project_id: ProjectId) -> Optional[list[ProjectId]]:
             match marks.get(project_id, Mark.WHITE):
                 case Mark.GREY:
                     return [project_id]
@@ -156,7 +156,7 @@ class Solution:
         return (True, output)
 
     def _scan_projects(self) -> None:
-        guid_map: dict[Guid, SimpleProjectId] = dict()
+        guid_map: dict[Guid, ProjectId] = dict()
         for project_id, project in self._registry.complete().items():
             for (subproject_id, guids) in project.project_ref_guids().items():
                 if subproject_id not in self._project_roots:
@@ -186,10 +186,10 @@ class Solution:
     def path(self):
         return self._path
 
-    def project_roots(self) -> SetView[SimpleProjectId]:
+    def project_roots(self) -> SetView[ProjectId]:
         return SetView(self._project_roots)
 
-    def project_parents(self) -> MultiMapView[SimpleProjectId, SimpleProjectId]:
+    def project_parents(self) -> MultiMapView[ProjectId, ProjectId]:
         return MultiMapView(self._project_parents)
 
     def projects(self) -> ValuesView[Project]:
@@ -230,21 +230,21 @@ class Solution:
 
     def undeclared_projects(
             self
-    ) -> Iterator[tuple[SimpleProjectId, SetView[SimpleProjectId]]]:
+    ) -> Iterator[tuple[ProjectId, SetView[ProjectId]]]:
         for project, undeclared in self._project_undeclared.items():
             yield (project, SetView(undeclared))
 
-    def dangling_projects(self) -> SetView[SimpleProjectId]:
+    def dangling_projects(self) -> SetView[ProjectId]:
         return self._registry.dangling()
 
     def dangling_assemblies(
             self
-    ) -> MultiMapView[SimpleProjectId, AssemblyId]:
+    ) -> MultiMapView[ProjectId, AssemblyId]:
         return MultiMapView(self._assembly_dangling)
 
     def dangling_sources(
             self
-    ) -> MultiMapView[SimpleProjectId, SourceId]:
+    ) -> MultiMapView[ProjectId, SourceId]:
         return MultiMapView(self._source_dangling)
 
     def __str__(self):

@@ -11,7 +11,7 @@ from typing import Generic, NewType, Optional, Union, TypeVar, TYPE_CHECKING
 
 from . import util
 from .data_view import SequenceView
-from .id import AssemblyId, Guid, Name, SimpleProjectId, ProjectId, SourceId
+from .id import AssemblyId, Guid, Name, ProjectId, SourceId
 from .multimap import MultiMap, MultiMapView
 from .var_env import VarEnv
 
@@ -28,9 +28,9 @@ def _path_has_leading_subst(path: str | Path) -> bool:
 def _get_xml_text(node: xml.Node) -> str:
     def go(node: xml.Node, accum: list[str]):
         for node in node.childNodes:
-            if node.nodeType == xml.Node.TEXT_NODE:
-                accum.append(node.data)
-            elif node.nodeType == xml.Node.ELEMENT_NODE:
+            if node.nodeType == xml.Node.TEXT_NODE:  # type: ignore
+                accum.append(node.data)  # type: ignore
+            elif node.nodeType == xml.Node.ELEMENT_NODE:  # type: ignore
                 go(node, accum)
     accum: list[str] = []
     go(node, accum)
@@ -56,12 +56,12 @@ class ProjectLoadOk(Generic[_PLO_T]):
 
 @dataclass
 class ProjectLoadDangling:
-    backtrace: list[SimpleProjectId]
+    backtrace: list[ProjectId]
 
 
 @dataclass
 class ProjectLoadCycle:
-    backtrace: list[SimpleProjectId]
+    backtrace: list[ProjectId]
 
 
 _PLR_T = TypeVar("_PLR_T")
@@ -121,8 +121,8 @@ class ProjectPropGroup:
 
 class Project:
 
-    _project_id: SimpleProjectId
-    _project_ref_ids: MultiMap[SimpleProjectId, Guid]
+    _project_id: ProjectId
+    _project_ref_ids: MultiMap[ProjectId, Guid]
     # note: we are not using is_nuget_assembly as a distinguishing factor
     _assembly_ref_ids: dict[Name, dict[Optional[Path], AssemblyId]]
     _source_ref_ids: dict[Path, SourceId]
@@ -133,7 +133,7 @@ class Project:
     def __init__(
             self,
             registry: "ProjectRegistry",
-            project_id: SimpleProjectId
+            project_id: ProjectId
     ):
         self._project_id = project_id
         self._assembly_ref_ids = dict()
@@ -145,7 +145,7 @@ class Project:
     def load(
             cls,
             registry: "ProjectRegistry",
-            project_id: SimpleProjectId
+            project_id: ProjectId
     ) -> "ProjectLoadResult[Project]":
         if not project_id.path.exists():
             return ProjectLoadDangling([project_id])
@@ -153,7 +153,7 @@ class Project:
         return project._load(registry)
 
     @property
-    def project_id(self) -> SimpleProjectId:
+    def project_id(self) -> ProjectId:
         return self._project_id
 
     def assembly_refs(self) -> Iterator[AssemblyId]:
@@ -161,10 +161,10 @@ class Project:
             for assembly_id in path_map.values():
                 yield assembly_id
 
-    def project_refs(self) -> KeysView[SimpleProjectId]:
+    def project_refs(self) -> KeysView[ProjectId]:
         return self._project_ref_ids.keys()
 
-    def project_ref_guids(self) -> MultiMapView[SimpleProjectId, Guid]:
+    def project_ref_guids(self) -> MultiMapView[ProjectId, Guid]:
         return MultiMapView(self._project_ref_ids)
 
     def source_refs(self) -> ValuesView[SourceId]:
@@ -275,14 +275,14 @@ class Project:
             if assembly_id is not None:
                 self._add_assembly_id(assembly_id)
 
-    def _add_project_id(self, guid: Guid, project_id: SimpleProjectId):
+    def _add_project_id(self, guid: Guid, project_id: ProjectId):
         self._project_ref_ids.add(project_id, guid)
 
     def _load_project_ref(
             self,
             registry: "ProjectRegistry",
             project_ref: xml.Element
-    ) -> Optional[ProjectLoadResult[tuple[Guid, SimpleProjectId]]]:
+    ) -> Optional[ProjectLoadResult[tuple[Guid, ProjectId]]]:
         if not project_ref.hasAttribute("Include"):
             return None
 
@@ -304,7 +304,7 @@ class Project:
         guid = guid.lstrip("{").rstrip("}")
         path = self._normalize_relpath(project_ref.getAttribute("Include"))
 
-        return ProjectLoadOk((Guid(guid), SimpleProjectId(name, path)))
+        return ProjectLoadOk((Guid(guid), ProjectId(name, path)))
 
     def _load_project_refs(
             self,

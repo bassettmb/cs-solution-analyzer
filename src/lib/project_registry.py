@@ -1,7 +1,7 @@
 
 from .data_view import MapView, SetView
 
-from .id import SimpleProjectId
+from .id import ProjectId
 from .project import (
     Project,
     ProjectLoadResult,
@@ -10,16 +10,16 @@ from .project import (
 
 class ProjectRegistry:
 
-    _project_complete: dict[SimpleProjectId, Project]
-    _project_dangling: set[SimpleProjectId]
-    _project_loading: set[SimpleProjectId]
+    _project_complete: dict[ProjectId, Project]
+    _project_dangling: set[ProjectId]
+    _project_loading: set[ProjectId]
 
     def __init__(self):
         self._project_complete = dict()
         self._project_dangling = set()
         self._project_loading = set()
 
-    def load(self, project_id: SimpleProjectId) -> ProjectLoadResult[Project]:
+    def load(self, project_id: ProjectId) -> ProjectLoadResult[Project]:
 
         if project_id in self._project_complete:
             return ProjectLoadOk(self._project_complete[project_id])
@@ -47,8 +47,8 @@ class ProjectRegistry:
                 backtrace.append(project_id)
                 return ProjectLoadCycle(backtrace)
 
-    def complete(self) -> MapView[SimpleProjectId, Project]:
+    def complete(self) -> MapView[ProjectId, Project]:
         return MapView(self._project_complete)
 
-    def dangling(self) -> SetView[SimpleProjectId]:
+    def dangling(self) -> SetView[ProjectId]:
         return SetView(self._project_dangling)

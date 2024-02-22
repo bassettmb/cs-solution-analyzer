@@ -3,7 +3,7 @@ import subprocess
 
 from .get_args import get_args
 from ..lib.project_registry import ProjectRegistry
-from ..lib.id import SimpleProjectId
+from ..lib.id import ProjectId
 from ..lib.project import (
     Project,
     ProjectLoadResult,
@@ -31,20 +31,34 @@ def main():
     config = get_args()
     registry = ProjectRegistry()
 
+    count = 10
+
     os.chdir(config.repo)
     for line in find_projects(config.root).stdout.splitlines():
         path = util.normalize_windows_path(line)
         name = path.stem
-        project_id = SimpleProjectId(name, path)
+        project_id = ProjectId(name, path)
         match registry.load(project_id):
             case ProjectLoadOk(project):
-                pass
-                #print("Complete")
-                #print("  " + str(project.project_id))
+                print(project_id)
+                print("  project refs")
+                for subproject_id in project.project_refs():
+                    print("    " + str(subproject_id))
+                print("  assembly refs")
+                for assembly_id in project.assembly_refs():
+                    print("    " + str(assembly_id))
+                print("  prop groups")
+                for prop_group in project.prop_groups():
+                    print("    " + str(prop_group))
             case ProjectLoadDangling(backtrace) | ProjectLoadCycle(backtrace):
                 print("Dangling")
                 for project_id in reversed(backtrace):
                     print("  " + str(project_id))
+        break
+        count -= 1
+        if count <= 0:
+            break
+
 
 
 if __name__ == "__main__":
