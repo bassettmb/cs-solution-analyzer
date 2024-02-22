@@ -8,15 +8,6 @@ from .project import (
     ProjectLoadOk, ProjectLoadDangling, ProjectLoadCycle
 )
 
-
-# class ProjectLoadComplete:
-#     project: "Project"
-# class ProjectLoadDangling:
-#     backtrace: list[ProjectId]
-# class ProjectLoadCycle:
-#    backtrace: list[ProjectId]
-# ProjectLoadResult = Union
-
 class ProjectRegistry:
 
     _project_complete: dict[SimpleProjectId, Project]

@@ -163,8 +163,10 @@ class Solution:
                     self._project_undeclared.add(project_id, subproject_id)
                 for guid in guids:
                     if guid in guid_map:
-                        self._duplicated_guids.add(guid, subproject_id)
-                        self._duplicated_guids.add(guid, guid_map[guid])
+                        other_id = guid_map[guid]
+                        if other_id != subproject_id:
+                            self._duplicated_guids.add(guid, other_id)
+                            self._duplicated_guids.add(guid, subproject_id)
                     else:
                         guid_map[guid] = subproject_id
             for assembly in project.assembly_refs():
@@ -223,8 +225,8 @@ class Solution:
     def has_dangling_sources(self) -> bool:
         return len(self._source_dangling) > 0
 
-    # def duplicated_guids(self) -> MultiMapView[Guid, ProjectId]:
-    #     return MultiMapView(self._project_guid_duplicates)
+    def duplicated_guids(self) -> MultiMapView[Guid, ProjectId]:
+        return MultiMapView(self._duplicated_guids)
 
     def undeclared_projects(
             self
