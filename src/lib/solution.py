@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Generic, Optional, TypeVar
 
 from . import util
-from .id import AssemblyId, Guid, ProjectId, SourceId
+from .id import AssemblyId, Guid, ProjectId, SimpleProjectId, SourceId
 from .data_view import SetView
 from .multimap import (
     MultiMap, MultiMapView, MultiMapItemsView, MultiMapValuesView
@@ -40,33 +40,39 @@ class Solution:
 
     _path: Path
     _registry: ProjectRegistry
-    _project_guids: dict[Guid, ProjectId]
-    _project_roots: dict[Guid, ProjectId]
-    _project_registry: dict[Guid, Project]
-    _project_parents: MultiMap[ProjectId, ProjectId]
-    _project_guid_duplicates: MultiMap[Guid, ProjectId]
-    _project_undeclared: MultiMap[ProjectId, ProjectId]
-    _project_dangling: dict[Guid, ProjectId]
-    _assembly_dangling: MultiMap[ProjectId, AssemblyId]
-    _source_dangling: MultiMap[ProjectId, SourceId]
+
+    _project_guids: MultiMap[SimpleProjectId, Guid]
+    _project_roots: set[SimpleProjectId]
+
+    _project_cyclic: set[SimpleProjectId]
+
+    _project_parents: MultiMap[SimpleProjectId, SimpleProjectId]
+    _project_undeclared: MultiMap[SimpleProjectId, SimpleProjectId]
+    _assembly_dangling: MultiMap[SimpleProjectId, AssemblyId]
+    _source_dangling: MultiMap[SimpleProjectId, SourceId]
+    _duplicated_guids: MultiMap[Guid, SimpleProjectId]
 
     _PARSE_PROJECT_REGEXP = _build_parse_project_regexp()
 
     def __init__(self, path: str | Path):
+
         self._path = util.normalize_windows_path(path)
         self._registry = ProjectRegistry()
-        self._project_guids = dict()
-        self._project_roots = dict()
-        self._project_registry = dict()
+
+        self._project_guids = MultiMap()
+        self._project_roots = set()
+
+        self._project_cyclic = set()
+
         self._project_parents = MultiMap()
-        self._project_guid_duplicates = MultiMap()
         self._project_undeclared = MultiMap()
-        self._project_dangling = dict()
         self._assembly_dangling = MultiMap()
         self._source_dangling = MultiMap()
+        self._duplicated_guids = MultiMap()
+
         self._load()
 
-    def _parse_project(self, line):
+    def _parse_project(self, line) -> Optional[tuple[Guid, SimpleProjectId]]:
 
         match = self._PARSE_PROJECT_REGEXP.match(line)
         if match is None:
@@ -77,64 +83,59 @@ class Solution:
 
         repo_path = util.normalize_windows_relpath(self.path.parent, path)
 
-        return ProjectId(name, repo_path, Guid(guid))
+        return (Guid(guid), SimpleProjectId(name, repo_path))
 
     def _load_projects(self):
-        # this is insufficient for when projects may import one another ..
-        stack = []
-        for guid in self._project_roots:
-            stack.append(self._project_roots[guid])
+        stack = list(self._project_roots)
         while len(stack) > 0:
             project_id = stack.pop()
-            guid = project_id.guid
-            if guid in self._project_registry:
-                other = self._project_registry[guid].project_id
-                if other != project_id:
-                    self._project_guid_duplicates.add(guid, other)
-                    self._project_guid_duplicates.add(guid, project_id)
-            elif guid not in self._project_dangling:
-                project = Project.load(self._registry, project_id)
-                match project:
-                    case ProjectLoadDangling(_):
-                        self._project_dangling[guid] = project_id
+            if not (project_id in self._registry.complete() or
+                    project_id in self._registry.dangling() or
+                    project_id in self._project_cyclic):
+                match self._registry.load(project_id):
                     case ProjectLoadOk(project):
-                        self._project_registry[guid] = project
                         for project_id in project.project_refs():
                             self._project_parents.add(project_id, project.project_id)
                             stack.append(project_id)
-                    case _:
-                        raise NotImplementedError()
+                    case ProjectLoadDangling(_):
+                        pass
+                    case ProjectLoadCycle(_):
+                        self._project_cyclic.add(project_id)
 
     def _load_roots(self):
         with open(self._path, "r") as file:
             for line in file.readlines():
-                project = self._parse_project(line)
-                if project:
-                    self._project_roots[project.guid] = project
+                result = self._parse_project(line)
+                if result is not None:
+                    guid, project_id = result
+                    self._project_guids.add(project_id, guid)
+                    self._project_roots.add(project_id)
 
-    def topsort(self) -> tuple[bool, list[ProjectId]]:
+    def topsort(self) -> tuple[bool, list[SimpleProjectId]]:
 
         class Mark(Enum):
             WHITE = 0
             GREY = enum.auto()
             BLACK = enum.auto()
 
-        marks: dict[ProjectId, Mark] = dict()
+        marks: dict[SimpleProjectId, Mark] = dict()
         output = []
 
-        def visit(project_id: ProjectId) -> Optional[list[ProjectId]]:
-            assert isinstance(project_id, ProjectId)
+        complete = self._registry.complete()
+        dangling = self._registry.dangling()
+
+        def visit(project_id: SimpleProjectId) -> Optional[list[SimpleProjectId]]:
             match marks.get(project_id, Mark.WHITE):
                 case Mark.GREY:
                     return [project_id]
                 case Mark.BLACK:
                     return None
-            if project_id.guid in self._project_dangling:
+            if project_id in dangling:
                 marks[project_id] = Mark.BLACK
                 output.append(project_id)
                 return None
             marks[project_id] = Mark.GREY
-            project = self._project_registry[project_id.guid]
+            project = complete[project_id]
             for subproject_id in project.project_refs():
                 result = visit(subproject_id)
                 if result is not None:
@@ -144,8 +145,7 @@ class Solution:
             output.append(project_id)
             return None
 
-        for guid in self._project_roots:
-            root_id = self._project_roots[guid]
+        for root_id in self._project_roots:
             result = visit(root_id)
             if result is not None:
                 result.append(root_id)
@@ -155,13 +155,18 @@ class Solution:
         output.reverse()
         return (True, output)
 
-    def _scan_projects(self):
-
-        for project in self._project_registry.values():
-            project_id = project.project_id
-            for subproject_id in project.project_refs():
-                if subproject_id.guid not in self._project_roots:
+    def _scan_projects(self) -> None:
+        guid_map: dict[Guid, SimpleProjectId] = dict()
+        for project_id, project in self._registry.complete().items():
+            for (subproject_id, guids) in project.project_ref_guids().items():
+                if subproject_id not in self._project_roots:
                     self._project_undeclared.add(project_id, subproject_id)
+                for guid in guids:
+                    if guid in guid_map:
+                        self._duplicated_guids.add(guid, subproject_id)
+                        self._duplicated_guids.add(guid, guid_map[guid])
+                    else:
+                        guid_map[guid] = subproject_id
             for assembly in project.assembly_refs():
                 path = assembly.path
                 if path is not None and not path.exists():
@@ -179,14 +184,14 @@ class Solution:
     def path(self):
         return self._path
 
-    def project_roots(self) -> ValuesView[ProjectId]:
-        return self._project_roots.values()
+    def project_roots(self) -> SetView[SimpleProjectId]:
+        return SetView(self._project_roots)
 
-    def project_parents(self) -> MultiMapView[ProjectId, ProjectId]:
+    def project_parents(self) -> MultiMapView[SimpleProjectId, SimpleProjectId]:
         return MultiMapView(self._project_parents)
 
     def projects(self) -> ValuesView[Project]:
-        return self._project_registry.values()
+        return self._registry.complete().values()
 
     @property
     def is_broken(self) -> bool:
@@ -200,7 +205,7 @@ class Solution:
 
     @property
     def has_duplicated_guids(self) -> bool:
-        return len(self._project_guid_duplicates) > 0
+       return len(self._duplicated_guids) > 0
 
     @property
     def has_undeclared_projects(self) -> bool:
@@ -208,7 +213,7 @@ class Solution:
 
     @property
     def has_dangling_projects(self) -> bool:
-        return len(self._project_dangling) > 0
+        return len(self._registry.dangling()) > 0
 
     @property
     def has_dangling_assemblies(self) -> bool:
@@ -218,41 +223,27 @@ class Solution:
     def has_dangling_sources(self) -> bool:
         return len(self._source_dangling) > 0
 
-    def duplicated_guids(self) -> MultiMapView[Guid, ProjectId]:
-        return MultiMapView(self._project_guid_duplicates)
+    # def duplicated_guids(self) -> MultiMapView[Guid, ProjectId]:
+    #     return MultiMapView(self._project_guid_duplicates)
 
     def undeclared_projects(
             self
-    ) -> Iterator[tuple[ProjectId, SetView[ProjectId]]]:
+    ) -> Iterator[tuple[SimpleProjectId, SetView[SimpleProjectId]]]:
         for project, undeclared in self._project_undeclared.items():
             yield (project, SetView(undeclared))
 
-    # _project_roots: dict[Guid, ProjectId]
-    # _project_registry: dict[Guid, Project]
-    # _project_undeclared: dict[ProjectId, set[ProjectId]]
-    # _project_dangling: dict[Guid, ProjectId]
-    # _assembly_dangling: dict[ProjectId, set[AssemblyId]]
-    # _source_dangling: dict[ProjectId, set[SourceId]]
-
-    def dangling_projects(self) -> ValuesView[ProjectId]:
-        return self._project_dangling.values()
+    def dangling_projects(self) -> SetView[SimpleProjectId]:
+        return self._registry.dangling()
 
     def dangling_assemblies(
             self
-    ) -> MultiMapView[ProjectId, AssemblyId]:
+    ) -> MultiMapView[SimpleProjectId, AssemblyId]:
         return MultiMapView(self._assembly_dangling)
 
     def dangling_sources(
             self
-    ) -> MultiMapView[ProjectId, SourceId]:
+    ) -> MultiMapView[SimpleProjectId, SourceId]:
         return MultiMapView(self._source_dangling)
-
-    # def __contains__(self, item: Guid | ProjectId) -> bool:
-    #     guid = item.guid if isinstance(item, ProjectId) else item
-    #     return guid in self._project_roots
-
-    # def __getitem__(self, key: Guid) -> ProjectId:
-    #     return self._project_roots[key]
 
     def __str__(self):
         return f"Solution({self.path})"

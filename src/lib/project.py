@@ -3,7 +3,7 @@ import re
 
 import xml.dom.minidom as xml
 
-from collections.abc import Iterator, ValuesView
+from collections.abc import Iterator, KeysView, ValuesView
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -12,6 +12,7 @@ from typing import Generic, NewType, Optional, Union, TypeVar, TYPE_CHECKING
 from . import util
 from .data_view import SequenceView
 from .id import AssemblyId, Guid, Name, SimpleProjectId, ProjectId, SourceId
+from .multimap import MultiMap, MultiMapView
 from .var_env import VarEnv
 
 if TYPE_CHECKING:
@@ -121,7 +122,7 @@ class ProjectPropGroup:
 class Project:
 
     _project_id: SimpleProjectId
-    _project_ref_ids: dict[Guid, SimpleProjectId]
+    _project_ref_ids: MultiMap[SimpleProjectId, Guid]
     # note: we are not using is_nuget_assembly as a distinguishing factor
     _assembly_ref_ids: dict[Name, dict[Optional[Path], AssemblyId]]
     _source_ref_ids: dict[Path, SourceId]
@@ -136,7 +137,7 @@ class Project:
     ):
         self._project_id = project_id
         self._assembly_ref_ids = dict()
-        self._project_ref_ids = dict()
+        self._project_ref_ids = MultiMap()
         self._source_ref_ids = dict()
         self._prop_groups = list()
 
@@ -160,11 +161,11 @@ class Project:
             for assembly_id in path_map.values():
                 yield assembly_id
 
-    def project_refs(self) -> set[ProjectId]:
-        project_refs = set()
-        for guid, simple_ref in self._project_ref_ids.items():
-            project_refs.add(ProjectId(simple_ref.name, simple_ref.path, guid))
-        return project_refs
+    def project_refs(self) -> KeysView[SimpleProjectId]:
+        return self._project_ref_ids.keys()
+
+    def project_ref_guids(self) -> MultiMapView[SimpleProjectId, Guid]:
+        return MultiMapView(self._project_ref_ids)
 
     def source_refs(self) -> ValuesView[SourceId]:
         return self._source_ref_ids.values()
@@ -275,18 +276,7 @@ class Project:
                 self._add_assembly_id(assembly_id)
 
     def _add_project_id(self, guid: Guid, project_id: SimpleProjectId):
-        if guid not in self._project_ref_ids:
-            self._project_ref_ids[guid] = project_id
-        else:
-            present = self._project_ref_ids[guid]
-            if project_id != present:
-                raise RuntimeError(
-                    "\n".join([
-                        "distinct projects with the same guid???",
-                        f"  old: {present}",
-                        f"  new: {project_id}"
-                    ])
-                )
+        self._project_ref_ids.add(project_id, guid)
 
     def _load_project_ref(
             self,
@@ -348,18 +338,26 @@ class Project:
         else:
             self._source_ref_ids[path] = source_id
 
-    def _load_source_ref(self, root: xml.Element) -> Optional[SourceId]:
-        if not root.hasAttribute("Include"):
+    def _load_source_ref(self, root: xml.Element) -> Optional[list[SourceId]]:
+        INCLUDE = "Include"
+        if not root.hasAttribute(INCLUDE):
             return None
-        path = self._normalize_relpath(root.getAttribute("Include"))
-        name = path.name
-        return SourceId(name, path)
+        # source Includes may contain more than one path, separated by semicolons
+        sources = []
+        for item in root.getAttribute(INCLUDE).split(";"):
+            path_string = item.strip()
+            if "" != path_string:
+                path = self._normalize_relpath(path_string)
+                name = path.name
+                sources.append(SourceId(name, path))
+        return None if len(sources) <= 0 else sources
 
     def _load_source_refs(self, root: xml.Document):
         for source_ref in root.getElementsByTagName("Compile"):
-            source_id = self._load_source_ref(source_ref)
-            if source_id is not None:
-                self._add_source_id(source_id)
+            sources = self._load_source_ref(source_ref)
+            if sources is not None:
+                for source_id in sources:
+                    self._add_source_id(source_id)
 
     def _add_prop_group(self, prop_group: ProjectPropGroup):
         self._prop_groups.append(prop_group)
