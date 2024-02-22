@@ -1,1 +1,1 @@
-python3 -m mypy -p src --namespace-packages
+python3 -m mypy --check-untyped-defs -p src --namespace-packages
