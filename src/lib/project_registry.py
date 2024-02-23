@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+from typing import Optional
 
 from .data_view import MapView, SetView
 
@@ -14,10 +16,11 @@ class ProjectRegistry:
     _project_dangling: set[ProjectId]
     _project_loading: set[ProjectId]
 
-    def __init__(self):
+    def __init__(self, config: Optional[Iterable[str, str]] = None):
         self._project_complete = dict()
         self._project_dangling = set()
         self._project_loading = set()
+        self._config = dict() if config is None else dict(config)
 
     def load(self, project_id: ProjectId) -> ProjectLoadResult[Project]:
 
@@ -46,6 +49,9 @@ class ProjectRegistry:
             case ProjectLoadCycle(backtrace):
                 backtrace.append(project_id)
                 return ProjectLoadCycle(backtrace)
+
+    def config(self) -> MapView[str, str]:
+        return MapView(self._config)
 
     def complete(self) -> MapView[ProjectId, Project]:
         return MapView(self._project_complete)
