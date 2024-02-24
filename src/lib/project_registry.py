@@ -16,7 +16,7 @@ class ProjectRegistry:
     _project_dangling: set[ProjectId]
     _project_loading: set[ProjectId]
 
-    def __init__(self, config: Optional[Iterable[str, str]] = None):
+    def __init__(self, config: Optional[Iterable[tuple[str, str]]] = None):
         self._project_complete = dict()
         self._project_dangling = set()
         self._project_loading = set()
