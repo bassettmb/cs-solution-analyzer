@@ -82,14 +82,6 @@ ProjectLoadResult = Union[
     ProjectLoadCycle
 ]
 
-            # for assembly in project.assembly_refs():
-            #     path = assembly.path
-            #     if path is not None and not path.exists():
-            #         self._assembly_dangling.add(project_id, assembly)
-            # for source in project.source_refs():
-            #     if not source.path.exists():
-            #         self._source_dangling.add(project_id, source)
-
 
 class Project:
 
@@ -98,13 +90,10 @@ class Project:
     _project_id: ProjectId
 
     _project_ref_ids: MultiMap[ProjectId, Guid]
-    _dangling_project_ref_ids: MultiMap[ProjectId, Guid]
 
     # note: we are not using is_nuget_assembly as a distinguishing factor
     _assembly_ref_ids: set[AssemblyId]
-    _dangling_assembly_ref_ids: set[AssemblyId]
     _source_ref_ids: set[SourceId]
-    _dangling_source_ref_ids: set[SourceId]
 
 
     _props: dict[str, str]
@@ -118,11 +107,8 @@ class Project:
     ):
         self._project_id = project_id
         self._project_ref_ids = MultiMap()
-        self._dangling_project_ref_ids = MultiMap()
         self._assembly_ref_ids = set()
-        self._dangling_assembly_ref_ids = set()
         self._source_ref_ids = set()
-        self._dangling_source_ref_ids = set()
         self._props = dict()
 
     @classmethod
@@ -143,26 +129,14 @@ class Project:
     def assembly_refs(self) -> SetView[AssemblyId]:
         return SetView(self._assembly_ref_ids)
 
-    def dangling_assembly_refs(self) -> SetView[AssemblyId]:
-        return SetView(self._dangling_assembly_ref_ids)
-
     def project_refs(self) -> KeysView[ProjectId]:
         return self._project_ref_ids.keys()
-
-    def dangling_project_refs(self) -> KeysView[ProjectId]:
-        return self._dangling_project_ref_ids.keys()
 
     def project_ref_guids(self) -> MultiMapView[ProjectId, Guid]:
         return MultiMapView(self._project_ref_ids)
 
-    def dangling_project_ref_guids(self) -> MultiMapView[ProjectId, Guid]:
-        return MultiMapView(self._dangling_project_ref_ids)
-
     def source_refs(self) -> SetView[SourceId]:
         return SetView(self._source_ref_ids)
-
-    def dangling_source_refs(self) -> SetView[SourceId]:
-        return SetView(self._dangling_source_ref_ids)
 
     def properties(self) -> MapView[str, str]:
         return MapView(self._props)
@@ -191,13 +165,8 @@ class Project:
         return util.normalize_windows_relpath(context, path)
 
     def _add_assembly_id(self, assembly_id: AssemblyId):
-        if not (assembly_id in self._assembly_ref_ids or
-                assembly_id in self._dangling_assembly_ref_ids):
-            path = assembly_id.path
-            if path is None or path.exists():
-                self._assembly_ref_ids.add(assembly_id)
-            else:
-                self._dangling_assembly_ref_ids.add(assembly_id)
+        if assembly_id not in self._assembly_ref_ids:
+            self._assembly_ref_ids.add(assembly_id)
 
     def _load_assembly_ref(
             self,
@@ -278,10 +247,7 @@ class Project:
                 self._add_assembly_id(assembly_id)
 
     def _add_project_id(self, guid: Guid, project_id: ProjectId):
-        if project_id.path.exists():
-            self._project_ref_ids.add(project_id, guid)
-        else:
-            self._dangling_project_ref_ids.add(project_id, guid)
+        self._project_ref_ids.add(project_id, guid)
 
     def _load_project_ref(
             self,
@@ -329,12 +295,8 @@ class Project:
         return ProjectLoadOk(None)
 
     def _add_source_id(self, source_id: SourceId):
-        if not (source_id in self._source_ref_ids or
-                source_id in self._dangling_source_ref_ids):
-            if source_id.path.exists():
-                self._source_ref_ids.add(source_id)
-            else:
-                self._dangling_source_ref_ids.add(source_id)
+        if source_id not in self._source_ref_ids:
+            self._source_ref_ids.add(source_id)
 
     def _load_source_ref(self, root: xml.Element) -> Optional[list[SourceId]]:
         INCLUDE = "Include"
