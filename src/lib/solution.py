@@ -38,11 +38,10 @@ class ProjectSet:
 
     _registry: ProjectRegistry
 
-    _project_cyclic: set[ProjectId]
-    _project_incompatible: set[ProjectId]
-
+    _project_parents: MultiMap[ProjectId, ProjectId]
     _project_outputs: dict[ProjectId, AssemblyId]
 
+    _project_cyclic: set[ProjectId]
     _assembly_dangling: MultiMap[ProjectId, AssemblyId]
     _source_dangling: MultiMap[ProjectId, SourceId]
 
@@ -55,10 +54,10 @@ class ProjectSet:
 
         self._registry = ProjectRegistry()
 
-        self._project_cyclic = set()
-
+        self._project_parents = MultiMap()
         self._project_outputs = dict()
 
+        self._project_cyclic = set()
         self._assembly_dangling = MultiMap()
         self._source_dangling = MultiMap()
 
@@ -82,6 +81,7 @@ class ProjectSet:
             match self._registry.load(project_id):
                 case ProjectLoadOk(project):
                     for subproject_id in project.project_refs():
+                        self._project_parents.add(subproject_id, project.project_id)
                         project_ids.append(subproject_id)
                     for assembly_id in project.assembly_refs():
                         assembly_path = assembly_id.path
