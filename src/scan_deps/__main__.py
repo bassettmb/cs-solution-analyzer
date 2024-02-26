@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-from .get_args import get_args
+from .get_args import get_args, Config
 from ..lib.id import ProjectId
 from ..lib.project import (
     Project,
@@ -25,16 +25,22 @@ def run_find(*args, **kwargs):
 def find_projects(repo):
     return run_find("\\.csproj$", str(repo))
 
+def create_registry(prog_config: Config) -> ProjectRegistry:
+    config = dict()
+    if prog_config.configuration is not None:
+        config[CONFIGURATION] = prog_config.configuration.value
+    if prog_config.platform is not None:
+        config[PLATFORM] = prog_config.platform.value
+    return ProjectRegistry(config)
 
 def main():
 
-    config = get_args()
-    registry = ProjectRegistry()
+    prog_config = get_args()
+    registry = create_registry(prog_config)
 
-    count = 10
+    os.chdir(prog_config.repo)
 
-    os.chdir(config.repo)
-    for line in find_projects(config.root).stdout.splitlines():
+    for line in find_projects(prog_config.root).stdout.splitlines():
         path = util.normalize_windows_path(line)
         name = path.stem
         project_id = ProjectId(name, path)
@@ -50,14 +56,13 @@ def main():
                 print("  properties")
                 for key, value in project.properties().items():
                     print(f"    {key}: {value}")
+                output = project.output()
+                if output is not None:
+                    print("  output:", output)
             case ProjectLoadDangling(backtrace) | ProjectLoadCycle(backtrace):
                 print("Dangling")
                 for project_id in reversed(backtrace):
                     print("  " + str(project_id))
-        break
-        count -= 1
-        if count <= 0:
-            break
 
 
 

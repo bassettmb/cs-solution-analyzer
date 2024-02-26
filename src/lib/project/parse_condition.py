@@ -2,7 +2,7 @@ import re
 
 from typing import Optional
 
-from .const import CONFIGURATION, PLATFORM
+from .const import CONFIGURATION, PLATFORM, Configuration, Platform
 
 WHITESPACE = r"\s*"
 
@@ -68,13 +68,8 @@ capturing_has_platform = build_var(
     capture(_HAS_PLATFORM, PLATFORM)
 )
 
-config_types = ["Debug", "Release", "Setup", "Retail"]
-for dotnet_version in ["NET20", "NET35", "NET40"]:
-    config_types.append(dotnet_version + "Debug")
-    config_types.append(dotnet_version + "Release")
-
-config = capture(CONFIGURATION, re_sum(*config_types))
-platform = capture(PLATFORM, re_sum("AnyCPU", "x86"))
+config = capture(CONFIGURATION, re_sum(*Configuration.values()))
+platform = capture(PLATFORM, re_sum(*Platform.values()))
 
 no_config_source = build_eq_expr(
     re_sum(
@@ -107,7 +102,7 @@ def parse_condition(
         text: str,
         configuration: Optional[str] = None,
         platform: Optional[str] = None
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[Optional[Configuration], Optional[Platform]]:
     if match := just_config.match(text):
         configuration = match.group(CONFIGURATION)
     elif match := just_platform.match(text):

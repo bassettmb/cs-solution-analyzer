@@ -16,7 +16,7 @@ from ..multimap import MultiMap, MultiMapView
 from ..var_env import VarEnv
 
 from . import const
-from .const import CONDITION, CONFIGURATION, PLATFORM
+from .const import CONDITION, CONFIGURATION, PLATFORM, Configuration, Platform
 from .parse_condition import parse_condition
 
 
@@ -177,6 +177,33 @@ class Project:
 
     def properties(self) -> MapView[str, str]:
         return MapView(self._props)
+
+    def output(self) -> Optional[Path]:
+        ASSEMBLY_NAME = "AssemblyName"
+        OUTPUT_PATH = "OutputPath"
+        OUTPUT_TYPE = "OutputType"
+
+        if ASSEMBLY_NAME not in self._props:
+            return None
+        if OUTPUT_PATH not in self._props:
+            return None
+        if OUTPUT_TYPE not in self._props:
+            return None
+
+        assembly_name = self._props[ASSEMBLY_NAME]
+        output_path = self._props[OUTPUT_PATH]
+        output_type = self._props[OUTPUT_TYPE]
+
+        match output_type:
+            case "Library":
+                extension = "dll"
+            case "Exe" | "WinExe":
+                extension = "exe"
+            case _:
+                return None
+
+        output_name = assembly_name + "." + extension
+        return self._normalize_relpath(output_path) / output_name
 
     def _normalize_relpath(self, path: str | Path) -> Path:
         context = self.project_id.path.parent
