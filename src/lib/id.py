@@ -64,11 +64,11 @@ class ProjectId:
         self._path = Path(path)
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name
 
     @property
-    def path(self):
+    def path(self) -> Path:
         return self._path
 
     def _structural_eq(self, other) -> bool:
