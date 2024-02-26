@@ -120,6 +120,9 @@ class ProjectSet:
     def cyclic_projects(self) -> SetView[ProjectId]:
         return SetView(self._project_cyclic)
 
+    def project_parents(self) -> MultiMapView[ProjectId, ProjectId]:
+        return MultiMapView(self._project_parents)
+
     def dangling_assemblies(
             self
     ) -> MultiMapView[ProjectId, AssemblyId]:
@@ -148,17 +151,11 @@ class Solution:
     # TODO: track the source of the broken stuff
 
     _path: Path
-    _registry: ProjectRegistry
+    _project_set: ProjectSet
 
     _project_guids: MultiMap[ProjectId, Guid]
     _project_roots: set[ProjectId]
-
-    _project_cyclic: set[ProjectId]
-
-    _project_parents: MultiMap[ProjectId, ProjectId]
     _project_undeclared: MultiMap[ProjectId, ProjectId]
-    _assembly_dangling: MultiMap[ProjectId, AssemblyId]
-    _source_dangling: MultiMap[ProjectId, SourceId]
     _duplicated_guids: MultiMap[Guid, ProjectId]
 
     _PARSE_PROJECT_REGEXP = _build_parse_project_regexp()
@@ -166,17 +163,11 @@ class Solution:
     def __init__(self, path: str | Path):
 
         self._path = util.normalize_windows_path(path)
-        self._registry = ProjectRegistry()
+        self._project_set = ProjectSet()
 
         self._project_guids = MultiMap()
         self._project_roots = set()
-
-        self._project_cyclic = set()
-
-        self._project_parents = MultiMap()
         self._project_undeclared = MultiMap()
-        self._assembly_dangling = MultiMap()
-        self._source_dangling = MultiMap()
         self._duplicated_guids = MultiMap()
 
         self._load()
@@ -195,22 +186,8 @@ class Solution:
         return (Guid(guid), ProjectId(name, repo_path))
 
     def _load_projects(self):
-        stack = list(self._project_roots)
-        while len(stack) > 0:
-            project_id = stack.pop()
-            if not (project_id in self._registry.complete() or
-                    project_id in self._registry.dangling() or
-                    project_id in self._registry.incompatible() or
-                    project_id in self._project_cyclic):
-                match self._registry.load(project_id):
-                    case ProjectLoadOk(project):
-                        for project_id in project.project_refs():
-                            self._project_parents.add(project_id, project.project_id)
-                            stack.append(project_id)
-                    case ProjectLoadDangling(_) | ProjectLoadIncompatible(_):
-                        pass
-                    case ProjectLoadCycle(_):
-                        self._project_cyclic.add(project_id)
+        for project in self._project_roots:
+            self._project_set.add(project)
 
     def _load_roots(self):
         with open(self._path, "r") as file:
@@ -304,7 +281,7 @@ class Solution:
         return MultiMapView(self._project_parents)
 
     def projects(self) -> ValuesView[Project]:
-        return self._registry.complete().values()
+        return self._project_set.projects()
 
     @property
     def is_broken(self) -> bool:
