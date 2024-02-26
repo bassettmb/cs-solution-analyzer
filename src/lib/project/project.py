@@ -17,7 +17,7 @@ from ..var_env import VarEnv
 
 from . import const
 from .const import CONDITION, CONFIGURATION, PLATFORM
-from .regexp import parse_condition
+from .parse_condition import parse_condition
 
 
 if TYPE_CHECKING:

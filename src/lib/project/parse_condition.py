@@ -67,7 +67,13 @@ capturing_has_config = build_var(
 capturing_has_platform = build_var(
     capture(_HAS_PLATFORM, PLATFORM)
 )
-config = capture(CONFIGURATION, re_sum("Debug", "Release"))
+
+config_types = ["Debug", "Release", "Setup", "Retail"]
+for dotnet_version in ["NET20", "NET35", "NET40"]:
+    config_types.append(dotnet_version + "Debug")
+    config_types.append(dotnet_version + "Release")
+
+config = capture(CONFIGURATION, re_sum(*config_types))
 platform = capture(PLATFORM, re_sum("AnyCPU", "x86"))
 
 no_config_source = build_eq_expr(
@@ -96,7 +102,6 @@ no_config = re.compile(no_config_source)
 just_config = re.compile(just_config_source)
 just_platform = re.compile(just_platform_source)
 combined = re.compile(combined_source)
-
 
 def parse_condition(
         text: str,
