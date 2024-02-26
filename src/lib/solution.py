@@ -20,9 +20,9 @@ from .multimap import (
 from .project import (
     Project,
     ProjectLoadOk, ProjectLoadDangling, ProjectLoadCycle,
-    ProjectLoadResult
+    ProjectLoadResult,
+    ProjectRegistry
 )
-from .project_registry import ProjectRegistry
 
 
 def _build_parse_project_regexp():

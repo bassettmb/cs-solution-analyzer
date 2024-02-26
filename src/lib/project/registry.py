@@ -1,26 +1,28 @@
 from collections.abc import Iterable
 from typing import Optional
 
-from .data_view import MapView, SetView
+from ..data_view import MapView, SetView
+from ..id import ProjectId
 
-from .id import ProjectId
 from .project import (
     Project,
     ProjectLoadResult,
     ProjectLoadOk, ProjectLoadDangling, ProjectLoadCycle
 )
 
+
 class ProjectRegistry:
 
     _project_complete: dict[ProjectId, Project]
     _project_dangling: set[ProjectId]
     _project_loading: set[ProjectId]
+    _project_config: dict[str, str]
 
     def __init__(self, config: Optional[Iterable[tuple[str, str]]] = None):
         self._project_complete = dict()
         self._project_dangling = set()
         self._project_loading = set()
-        self._config = dict() if config is None else dict(config)
+        self._project_config = dict() if config is None else dict(config)
 
     def load(self, project_id: ProjectId) -> ProjectLoadResult[Project]:
 
@@ -51,7 +53,7 @@ class ProjectRegistry:
                 return ProjectLoadCycle(backtrace)
 
     def config(self) -> MapView[str, str]:
-        return MapView(self._config)
+        return MapView(self._project_config)
 
     def complete(self) -> MapView[ProjectId, Project]:
         return MapView(self._project_complete)

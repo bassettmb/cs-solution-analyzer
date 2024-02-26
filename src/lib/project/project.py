@@ -9,11 +9,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Generic, NewType, Optional, Union, TypeVar, TYPE_CHECKING
 
-from . import util
-from .data_view import SequenceView
-from .id import AssemblyId, Guid, Name, ProjectId, SourceId
-from .multimap import MultiMap, MultiMapView
-from .var_env import VarEnv
+from .. import util
+from ..data_view import MapView
+from ..id import AssemblyId, Guid, Name, ProjectId, SourceId
+from ..multimap import MultiMap, MultiMapView
+from ..var_env import VarEnv
+
+from . import const
+from .const import CONDITION, CONFIGURATION, PLATFORM
+from .regexp import parse_condition
+
 
 if TYPE_CHECKING:
     from .project_registry import ProjectRegistry
@@ -126,7 +131,7 @@ class Project:
     # note: we are not using is_nuget_assembly as a distinguishing factor
     _assembly_ref_ids: dict[Name, dict[Optional[Path], AssemblyId]]
     _source_ref_ids: dict[Path, SourceId]
-    _prop_groups: list[ProjectPropGroup]
+    _props: dict[str, str]
 
     _PARSE_ASSEMBLY_NAME_REGEXP = _build_parse_assembly_name_regexp()
 
@@ -139,7 +144,7 @@ class Project:
         self._assembly_ref_ids = dict()
         self._project_ref_ids = MultiMap()
         self._source_ref_ids = dict()
-        self._prop_groups = list()
+        self._props = dict()
 
     @classmethod
     def load(
@@ -170,8 +175,8 @@ class Project:
     def source_refs(self) -> ValuesView[SourceId]:
         return self._source_ref_ids.values()
 
-    def prop_groups(self) -> SequenceView[ProjectPropGroup]:
-        return SequenceView(self._prop_groups)
+    def properties(self) -> MapView[str, str]:
+        return MapView(self._props)
 
     def _normalize_relpath(self, path: str | Path) -> Path:
         context = self.project_id.path.parent
@@ -359,42 +364,54 @@ class Project:
                 for source_id in sources:
                     self._add_source_id(source_id)
 
-    def _add_prop_group(self, prop_group: ProjectPropGroup):
-        self._prop_groups.append(prop_group)
-
-    def _load_prop_group(
+    def _load_props(
             self,
+            registry: "ProjectRegistry",
             root: xml.Element
-    ) -> Optional[ProjectPropGroup]:
-        assembly_name = None
-        output_path_string = None
-        output_type_string = None
-        for child in root.childNodes:
-            if child.nodeType == xml.Node.ELEMENT_NODE:
-                match child.tagName:
-                    case "AssemblyName":
-                        assembly_name = _get_xml_text(child)
-                    case "OutputPath":
-                        output_path_string = _get_xml_text(child)
-                    case "OutputType":
-                        output_type_string = _get_xml_text(child)
-        if (
-                assembly_name is None or
-                output_path_string is None or
-                output_type_string is None
-        ):
-            return None
-        output_type = OutputType.from_string(output_type_string)
-        if output_type is None:
-            return None
-        output_path = self._normalize_relpath(output_path_string)
-        return ProjectPropGroup(output_type, output_path, assembly_name)
+    ):
+        def match_condition(child, env):
+            def match_env(key, value, env):
+                return (
+                    # always match if no value
+                    value is None or
+                    # otherwise, require match on env
+                    (key in env and env[key] == value)
+                )
+            if not child.hasAttribute(CONDITION):
+                return True  # no condition! always match
+            configuration, platform = parse_condition(
+                child.getAttribute(CONDITION)
+            )
+            return (
+                match_env(CONFIGURATION, configuration, env) and
+                match_env(PLATFORM, platform, env)
+            )
 
-    def _load_prop_groups(self, root: xml.Document):
-        for prop_node in root.getElementsByTagName("PropertyGroup"):
-            prop_group = self._load_prop_group(prop_node)
-            if prop_group is not None:
-                self._add_prop_group(prop_group)
+        for prop_group in root.getElementsByTagName("PropertyGroup"):
+
+            if not match_condition(prop_group, self._props):
+                continue
+
+            for child in prop_group.childNodes:
+                if child.nodeType == xml.Node.ELEMENT_NODE:
+                    match child.tagName:
+                        case const.CONFIGURATION:
+                            # pick up new configuration values
+                            if match_condition(child, self._props):
+                                self._props[CONFIGURATION] = _get_xml_text(
+                                    child
+                                )
+                        case const.PLATFORM:
+                            if match_condition(child, self._props):
+                                self._props[PLATFORM] = _get_xml_text(child)
+                        case None:
+                            # hopefully this isn't reachable...
+                            assert False
+                        case tag_name:
+                            self._props[tag_name] = _get_xml_text(child)
+
+
+
 
     # def _find_import(self, root: xml.Element) -> Option[ProjectId]:
     #     if not root.hasAttribute("Project"):
@@ -419,7 +436,7 @@ class Project:
                 case ProjectLoadOk(_):
                     pass
             self._load_source_refs(root)
-            self._load_prop_groups(root)
+            self._load_props(registry, root)
         return ProjectLoadOk(self)
 
 

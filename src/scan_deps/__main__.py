@@ -2,12 +2,12 @@ import os
 import subprocess
 
 from .get_args import get_args
-from ..lib.project_registry import ProjectRegistry
 from ..lib.id import ProjectId
 from ..lib.project import (
     Project,
     ProjectLoadResult,
-    ProjectLoadOk, ProjectLoadDangling, ProjectLoadCycle
+    ProjectLoadOk, ProjectLoadDangling, ProjectLoadCycle,
+    ProjectRegistry
 )
 from ..lib import util
 
@@ -47,9 +47,9 @@ def main():
                 print("  assembly refs")
                 for assembly_id in project.assembly_refs():
                     print("    " + str(assembly_id))
-                print("  prop groups")
-                for prop_group in project.prop_groups():
-                    print("    " + str(prop_group))
+                print("  properties")
+                for key, value in project.properties().items():
+                    print(f"    {key}: {value}")
             case ProjectLoadDangling(backtrace) | ProjectLoadCycle(backtrace):
                 print("Dangling")
                 for project_id in reversed(backtrace):
