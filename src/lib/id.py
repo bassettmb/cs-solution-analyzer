@@ -29,11 +29,9 @@ class AssemblyId:
     def __init__(
             self,
             name: Name, path: Optional[Path],
-            is_nuget_assembly: bool = False
     ):
         self._name = name
         self._path = path
-        self._is_nuget_assembly = bool(is_nuget_assembly)
 
     @property
     def name(self) -> Name:
@@ -43,16 +41,11 @@ class AssemblyId:
     def path(self) -> Optional[Path]:
         return self._path
 
-    @property
-    def is_nuget_assembly(self) -> bool:
-        return self._is_nuget_assembly
-
     def __eq__(self, other) -> bool:
         return (
             isinstance(other, AssemblyId) and
             self._name == other._name and
-            self._path == other._path and
-            self._is_nuget_assembly == other._is_nuget_assembly
+            self._path == other._path
         )
 
     def __hash__(self) -> int:
@@ -60,8 +53,7 @@ class AssemblyId:
 
     def __str__(self):
         return "".join([
-            f"AssemblyId({self.name}, {self.path}, ",
-            f"is_nuget_assembly={self.is_nuget_assembly})"
+            f"AssemblyId({self.name}, {self.path})"
         ])
 
 

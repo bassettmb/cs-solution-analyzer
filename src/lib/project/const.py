@@ -20,6 +20,10 @@ class Configuration(StrEnum):
     NET40_RELEASE = "NET40-Release"
 
     @classmethod
+    def id(self) -> str:
+        return "Configuration"
+
+    @classmethod
     def members(self) -> set[Self]:
         return set(self)
 
@@ -41,6 +45,10 @@ class Platform(StrEnum):
     X86 = "x86"
 
     @classmethod
+    def id(self) -> str:
+        return "Platform"
+
+    @classmethod
     def members(self) -> set[Self]:
         return set(self)
 
@@ -54,3 +62,30 @@ class Platform(StrEnum):
             if item.value == value:
                 return item
         raise KeyError(value)
+
+
+class OutputType(StrEnum):
+
+    EXE = "Exe"
+    LIB = "Library"
+
+    def to_extension(self) -> str:
+        match self:
+            case self.EXE: return "exe"
+            case self.LIB: return "dll"
+            case _: assert False
+
+    @classmethod
+    def members(self) -> set[Self]:
+        return set(self)
+
+    @classmethod
+    def values(self) -> list[str]:
+        return list(map(str, self.members()))
+
+    @classmethod
+    def from_string(self, value: str) -> Self:
+        match value.upper():
+            case "EXE" | "WINEXE": return self.EXE
+            case "LIBRARY": return self.LIB
+            case _: raise KeyError(value)

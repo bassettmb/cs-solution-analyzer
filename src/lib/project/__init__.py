@@ -1,3 +1,6 @@
 from .project import *
 from .registry import *
-from .const import Configuration, Platform
+from .const import (
+    CONFIGURATION, PLATFORM,
+    Configuration, Platform
+)

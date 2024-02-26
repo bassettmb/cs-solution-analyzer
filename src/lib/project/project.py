@@ -7,7 +7,7 @@ from collections.abc import Iterator, KeysView, ValuesView
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Generic, NewType, Optional, Union, TypeVar, TYPE_CHECKING
+from typing import Generic, NewType, Optional, Union, Self, TypeVar, TYPE_CHECKING
 
 from .. import util
 from ..data_view import MapView
@@ -15,8 +15,11 @@ from ..id import AssemblyId, Guid, Name, ProjectId, SourceId
 from ..multimap import MultiMap, MultiMapView
 from ..var_env import VarEnv
 
-from . import const
-from .const import CONDITION, CONFIGURATION, PLATFORM, Configuration, Platform
+from . import const  # necessary for matching against constants
+from .const import (
+    CONDITION, CONFIGURATION, PLATFORM,
+    Configuration, Platform, OutputType
+)
 from .parse_condition import parse_condition
 
 
@@ -46,11 +49,6 @@ def _build_parse_assembly_name_regexp():
     return re.compile(r'\s*(?P<name>[^\s,]*)\s*,?')
 
 
-PropertyName = NewType("PropertyName", str)
-PropertyValue = NewType("PropertyValue", str)
-ProjectEnv = NewType("ProjectEnv", VarEnv[PropertyName, PropertyValue])
-
-
 _PLO_T = TypeVar("_PLO_T")
 
 
@@ -65,6 +63,11 @@ class ProjectLoadDangling:
 
 
 @dataclass
+class ProjectLoadIncompatible:
+    backtrace: list[ProjectId]
+
+
+@dataclass
 class ProjectLoadCycle:
     backtrace: list[ProjectId]
 
@@ -75,75 +78,51 @@ _PLR_T = TypeVar("_PLR_T")
 ProjectLoadResult = Union[
     ProjectLoadOk[_PLR_T],
     ProjectLoadDangling,
+    ProjectLoadIncompatible,
     ProjectLoadCycle
 ]
 
-
-class OutputType(Enum):
-    EXE = 0
-    LIB = enum.auto()
-
-    @classmethod
-    def from_string(self, string_repr: str) -> "Optional[OutputType]":
-        match string_repr.upper():
-            case "EXE" | "WINEXE": return self.EXE
-            case "LIBRARY": return self.LIB
-            case _: return None
-
-
-class ProjectPropGroup:
-
-    def __init__(
-            self,
-            output_type: OutputType,
-            output_path: Path,
-            assembly_name: str
-    ):
-        self._assembly_name = assembly_name
-        self._output_path = output_path
-        self._output_type = output_type
-
-    @property
-    def assembly_name(self) -> str:
-        return self._assembly_name
-
-    @property
-    def output_path(self) -> Path:
-        return self._output_path
-
-    @property
-    def output_type(self) -> OutputType:
-        return self._output_type
-
-    def __str__(self) -> str:
-        return "".join([
-            "SolutionPropGroup(",
-            f"{self.output_type}, ",
-            f"{self.output_path}, ",
-            f"{self.assembly_name})"
-        ])
+            # for assembly in project.assembly_refs():
+            #     path = assembly.path
+            #     if path is not None and not path.exists():
+            #         self._assembly_dangling.add(project_id, assembly)
+            # for source in project.source_refs():
+            #     if not source.path.exists():
+            #         self._source_dangling.add(project_id, source)
 
 
 class Project:
 
+    _PROJECT_XMLNS: str = "http://schemas.microsoft.com/developer/msbuild/2003"
+
     _project_id: ProjectId
+
     _project_ref_ids: MultiMap[ProjectId, Guid]
+    _dangling_project_ref_ids: MultiMap[ProjectId, Guid]
+
     # note: we are not using is_nuget_assembly as a distinguishing factor
     _assembly_ref_ids: dict[Name, dict[Optional[Path], AssemblyId]]
     _source_ref_ids: dict[Path, SourceId]
+
+    _dangling_assembly_ref_ids: set[AssemblyId]
+    _dangling_source_ref_ids: set[SourceId]
+
     _props: dict[str, str]
 
     _PARSE_ASSEMBLY_NAME_REGEXP = _build_parse_assembly_name_regexp()
 
+    # NB: external code should not construct a Project manually
     def __init__(
             self,
-            registry: "ProjectRegistry",
             project_id: ProjectId
     ):
         self._project_id = project_id
-        self._assembly_ref_ids = dict()
         self._project_ref_ids = MultiMap()
+        self._dangling_project_ref_ids = MultiMap()
+        self._assembly_ref_ids = dict()
         self._source_ref_ids = dict()
+        self._dangling_assembly_ref_ids = set()
+        self._dangling_source_ref_ids = set()
         self._props = dict()
 
     @classmethod
@@ -154,7 +133,7 @@ class Project:
     ) -> "ProjectLoadResult[Project]":
         if not project_id.path.exists():
             return ProjectLoadDangling([project_id])
-        project = cls(registry, project_id)
+        project = cls(project_id)
         return project._load(registry)
 
     @property
@@ -178,32 +157,24 @@ class Project:
     def properties(self) -> MapView[str, str]:
         return MapView(self._props)
 
-    def output(self) -> Optional[Path]:
-        ASSEMBLY_NAME = "AssemblyName"
-        OUTPUT_PATH = "OutputPath"
-        OUTPUT_TYPE = "OutputType"
-
-        if ASSEMBLY_NAME not in self._props:
-            return None
-        if OUTPUT_PATH not in self._props:
-            return None
-        if OUTPUT_TYPE not in self._props:
+    def output_type(self) -> Optional[OutputType]:
+        try:
+            return OutputType.from_string(self._props["OutputType"])
+        except KeyError:
             return None
 
-        assembly_name = self._props[ASSEMBLY_NAME]
-        output_path = self._props[OUTPUT_PATH]
-        output_type = self._props[OUTPUT_TYPE]
-
-        match output_type:
-            case "Library":
-                extension = "dll"
-            case "Exe" | "WinExe":
-                extension = "exe"
-            case _:
-                return None
-
-        output_name = assembly_name + "." + extension
-        return self._normalize_relpath(output_path) / output_name
+    def output(self) -> Optional[AssemblyId]:
+        try:
+            assembly_name = self._props["AssemblyName"]
+            output_path = self._props["OutputPath"]
+        except KeyError:
+            return None
+        output_type = self.output_type()
+        if output_type is None:
+            return None
+        output_name = assembly_name + "." + output_type.to_extension()
+        path = self._normalize_relpath(output_path) / output_name
+        return AssemblyId(assembly_name, path)
 
     def _normalize_relpath(self, path: str | Path) -> Path:
         context = self.project_id.path.parent
@@ -219,14 +190,14 @@ class Project:
                 if assembly_id != present:
                     raise RuntimeError(
                         "\n".join([
-                            "distinct assemblies with the name and path???",
+                            "distinct assemblies with the same name and path???",
                             f"  old: {present}",
                             f"  new: {assembly_id}"
                         ])
                     )
             else:
                 path_map[path] = assembly_id
-        else:
+        elif name in self._dangling_assembly_ref_ids:
             self._assembly_ref_ids[name] = {assembly_id.path: assembly_id}
 
     def _load_assembly_ref(
@@ -299,7 +270,7 @@ class Project:
             else:
                 path = self._normalize_relpath(path)
 
-        return AssemblyId(Name(name), path, is_nuget_assembly)
+        return AssemblyId(Name(name), path)
 
     def _load_assembly_refs(self, root: xml.Document):
         for assembly_ref in root.getElementsByTagName("Reference"):
@@ -395,7 +366,8 @@ class Project:
             self,
             registry: "ProjectRegistry",
             root: xml.Element
-    ):
+    ) -> ProjectLoadResult[None]:
+
         def match_condition(child, env):
             def match_env(key, value, env):
                 return (
@@ -413,6 +385,17 @@ class Project:
                 match_env(CONFIGURATION, configuration, env) and
                 match_env(PLATFORM, platform, env)
             )
+
+        project_elems = root.getElementsByTagName("Project")
+        if len(project_elems) != 1:
+            return ProjectLoadIncompatible([self.project_id])
+        project_elem = project_elems[0]
+        if (
+                not project_elem.hasAttribute("xmlns") or
+                project_elem.getAttribute("xmlns") != self._PROJECT_XMLNS
+        ):
+            from sys import stderr
+            print(f"Warning: project missing xmlns: {self.project_id}", file=stderr)
 
         registry_config = registry.config()
         if CONFIGURATION in registry_config:
@@ -443,6 +426,7 @@ class Project:
                         case tag_name:
                             self._props[tag_name] = _get_xml_text(child)
 
+        return ProjectLoadOk(None)
 
 
 
@@ -460,13 +444,23 @@ class Project:
 
     def _load(self, registry: "ProjectRegistry") -> "ProjectLoadResult[Project]":
         with xml.parse(str(self._project_id.path)) as root:
-            self._load_props(registry, root)
+            match self._load_props(registry, root):
+                case ProjectLoadDangling(backtrace):
+                    return ProjectLoadDangling(backtrace)
+                case ProjectLoadCycle(backtrace):
+                    return ProjectLoadCycle(backtrace)
+                case ProjectLoadIncompatible(backtrace):
+                    return ProjectLoadIncompatible(backtrace)
+                case ProjectLoadOk(_):
+                    pass
             self._load_assembly_refs(root)
             match self._load_project_refs(registry, root):
                 case ProjectLoadDangling(backtrace):
                     return ProjectLoadDangling(backtrace)
                 case ProjectLoadCycle(backtrace):
                     return ProjectLoadCycle(backtrace)
+                case ProjectLoadIncompatible(backtrace):
+                    return ProjectLoadIncompatible(backtrace)
                 case ProjectLoadOk(_):
                     pass
             self._load_source_refs(root)
@@ -474,7 +468,8 @@ class Project:
 
 
 __all__ = [
-    "Project", "PropertyName", "PropertyValue", "ProjectEnv",
-    "ProjectLoadOk", "ProjectLoadDangling", "ProjectLoadCycle",
-    "ProjectLoadResult", "ProjectPropGroup", "OutputType"
+    "Project",
+    "ProjectLoadOk",
+    "ProjectLoadDangling", "ProjectLoadCycle", "ProjectLoadIncompatible",
+    "ProjectLoadResult"
 ]

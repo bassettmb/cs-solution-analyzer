@@ -7,7 +7,7 @@ from ..id import ProjectId
 from .project import (
     Project,
     ProjectLoadResult,
-    ProjectLoadOk, ProjectLoadDangling, ProjectLoadCycle
+    ProjectLoadOk, ProjectLoadDangling, ProjectLoadIncompatible, ProjectLoadCycle
 )
 
 
@@ -15,12 +15,14 @@ class ProjectRegistry:
 
     _project_complete: dict[ProjectId, Project]
     _project_dangling: set[ProjectId]
+    _project_incompatible: set[ProjectId]
     _project_loading: set[ProjectId]
     _project_config: dict[str, str]
 
     def __init__(self, config: Optional[Iterable[tuple[str, str]]] = None):
         self._project_complete = dict()
         self._project_dangling = set()
+        self._project_incompatible = set()
         self._project_loading = set()
         self._project_config = dict() if config is None else dict(config)
 
@@ -30,6 +32,8 @@ class ProjectRegistry:
             return ProjectLoadOk(self._project_complete[project_id])
         if project_id in self._project_dangling:
             return ProjectLoadDangling([project_id])
+        if project_id in self._project_incompatible:
+            return ProjectLoadIncompatible([project_id])
         if project_id in self._project_loading:
             return ProjectLoadCycle([project_id])
 
@@ -48,6 +52,10 @@ class ProjectRegistry:
                 self._project_dangling.add(project_id)
                 backtrace.append(project_id)
                 return ProjectLoadDangling(backtrace)
+            case ProjectLoadIncompatible(backtrace):
+                self._project_incompatible.add(project_id)
+                backtrace.append(project_id)
+                return ProjectLoadIncompatible(backtrace)
             case ProjectLoadCycle(backtrace):
                 backtrace.append(project_id)
                 return ProjectLoadCycle(backtrace)
@@ -60,3 +68,6 @@ class ProjectRegistry:
 
     def dangling(self) -> SetView[ProjectId]:
         return SetView(self._project_dangling)
+
+    def incompatible(self) -> SetView[ProjectId]:
+        return SetView(self._project_incompatible)

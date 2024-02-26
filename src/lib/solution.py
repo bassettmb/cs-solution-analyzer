@@ -19,7 +19,7 @@ from .multimap import (
 )
 from .project import (
     Project,
-    ProjectLoadOk, ProjectLoadDangling, ProjectLoadCycle,
+    ProjectLoadOk, ProjectLoadDangling, ProjectLoadIncompatible, ProjectLoadCycle,
     ProjectLoadResult,
     ProjectRegistry
 )
@@ -33,6 +33,14 @@ def _build_parse_project_regexp():
     sep = r',\s*'
     return re.compile(''.join([prefix, name, sep, path, sep, guid]))
 
+
+class ProjectSet:
+
+    _registry: ProjectRegistry
+    _project_cyclic: set[ProjectId]
+    _project_outputs: dict[ProjectId, AssemblyId]
+    _assembly_dangling: MultiMap[ProjectId, AssemblyId]
+    _source_dangling: MultiMap[ProjectId, SourceId]
 
 class Solution:
 
@@ -91,13 +99,14 @@ class Solution:
             project_id = stack.pop()
             if not (project_id in self._registry.complete() or
                     project_id in self._registry.dangling() or
+                    project_id in self._registry.incompatible() or
                     project_id in self._project_cyclic):
                 match self._registry.load(project_id):
                     case ProjectLoadOk(project):
                         for project_id in project.project_refs():
                             self._project_parents.add(project_id, project.project_id)
                             stack.append(project_id)
-                    case ProjectLoadDangling(_):
+                    case ProjectLoadDangling(_) | ProjectLoadIncompatible(_):
                         pass
                     case ProjectLoadCycle(_):
                         self._project_cyclic.add(project_id)
@@ -123,6 +132,7 @@ class Solution:
 
         complete = self._registry.complete()
         dangling = self._registry.dangling()
+        incompatible = self._registry.incompatible()
 
         def visit(project_id: ProjectId) -> Optional[list[ProjectId]]:
             match marks.get(project_id, Mark.WHITE):
@@ -130,7 +140,7 @@ class Solution:
                     return [project_id]
                 case Mark.BLACK:
                     return None
-            if project_id in dangling:
+            if project_id in dangling or project_id in incompatible:
                 marks[project_id] = Mark.BLACK
                 output.append(project_id)
                 return None
@@ -202,7 +212,9 @@ class Solution:
             self.has_undeclared_projects or
             self.has_dangling_projects or
             self.has_dangling_assemblies or
-            self.has_dangling_sources
+            self.has_dangling_sources or
+            self.has_incompatible_projects or
+            self.has_cyclic_projects
         )
 
     @property
@@ -225,6 +237,14 @@ class Solution:
     def has_dangling_sources(self) -> bool:
         return len(self._source_dangling) > 0
 
+    @property
+    def has_incompatible_projects(self) -> bool:
+        return len(self._registry.incompatible()) > 0
+
+    @property
+    def has_cyclic_projects(self) -> bool:
+        return len(self._project_cyclic) > 0
+
     def duplicated_guids(self) -> MultiMapView[Guid, ProjectId]:
         return MultiMapView(self._duplicated_guids)
 
@@ -246,6 +266,12 @@ class Solution:
             self
     ) -> MultiMapView[ProjectId, SourceId]:
         return MultiMapView(self._source_dangling)
+
+    def incompatible_projects(self) -> SetView[ProjectId]:
+        return self._registry.incompatible()
+
+    def cyclic_projects(self) -> SetView[ProjectId]:
+        return SetView(self._project_cyclic)
 
     def __str__(self):
         return f"Solution({self.path})"
