@@ -387,6 +387,12 @@ class Project:
                 match_env(PLATFORM, platform, env)
             )
 
+        registry_config = registry.config()
+        if CONFIGURATION in registry_config:
+            self._props[CONFIGURATION] = registry_config[CONFIGURATION]
+        if PLATFORM in registry_config:
+            self._props[PLATFORM] = registry_config[PLATFORM]
+
         for prop_group in root.getElementsByTagName("PropertyGroup"):
 
             if not match_condition(prop_group, self._props):
@@ -427,6 +433,7 @@ class Project:
 
     def _load(self, registry: "ProjectRegistry") -> "ProjectLoadResult[Project]":
         with xml.parse(str(self._project_id.path)) as root:
+            self._load_props(registry, root)
             self._load_assembly_refs(root)
             match self._load_project_refs(registry, root):
                 case ProjectLoadDangling(backtrace):
@@ -436,7 +443,6 @@ class Project:
                 case ProjectLoadOk(_):
                     pass
             self._load_source_refs(root)
-            self._load_props(registry, root)
         return ProjectLoadOk(self)
 
 
