@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Generic, NewType, Optional, Union, Self, TypeVar, TYPE_CHECKING
 
 from .. import util
-from ..data_view import MapView
+from ..data_view import MapView, SetView
 from ..id import AssemblyId, Guid, Name, ProjectId, SourceId
 from ..multimap import MultiMap, MultiMapView
 from ..var_env import VarEnv
@@ -101,11 +101,11 @@ class Project:
     _dangling_project_ref_ids: MultiMap[ProjectId, Guid]
 
     # note: we are not using is_nuget_assembly as a distinguishing factor
-    _assembly_ref_ids: dict[Name, dict[Optional[Path], AssemblyId]]
-    _source_ref_ids: dict[Path, SourceId]
-
+    _assembly_ref_ids: set[AssemblyId]
     _dangling_assembly_ref_ids: set[AssemblyId]
+    _source_ref_ids: set[SourceId]
     _dangling_source_ref_ids: set[SourceId]
+
 
     _props: dict[str, str]
 
@@ -119,9 +119,9 @@ class Project:
         self._project_id = project_id
         self._project_ref_ids = MultiMap()
         self._dangling_project_ref_ids = MultiMap()
-        self._assembly_ref_ids = dict()
-        self._source_ref_ids = dict()
+        self._assembly_ref_ids = set()
         self._dangling_assembly_ref_ids = set()
+        self._source_ref_ids = set()
         self._dangling_source_ref_ids = set()
         self._props = dict()
 
@@ -130,7 +130,7 @@ class Project:
             cls,
             registry: "ProjectRegistry",
             project_id: ProjectId
-    ) -> "ProjectLoadResult[Project]":
+    ) -> ProjectLoadResult[Self]:
         if not project_id.path.exists():
             return ProjectLoadDangling([project_id])
         project = cls(project_id)
@@ -140,19 +140,29 @@ class Project:
     def project_id(self) -> ProjectId:
         return self._project_id
 
-    def assembly_refs(self) -> Iterator[AssemblyId]:
-        for path_map in self._assembly_ref_ids.values():
-            for assembly_id in path_map.values():
-                yield assembly_id
+    def assembly_refs(self) -> SetView[AssemblyId]:
+        return SetView(self._assembly_ref_ids)
+
+    def dangling_assembly_refs(self) -> SetView[AssemblyId]:
+        return SetView(self._dangling_assembly_ref_ids)
 
     def project_refs(self) -> KeysView[ProjectId]:
         return self._project_ref_ids.keys()
 
+    def dangling_project_refs(self) -> KeysView[ProjectId]:
+        return self._dangling_project_ref_ids.keys()
+
     def project_ref_guids(self) -> MultiMapView[ProjectId, Guid]:
         return MultiMapView(self._project_ref_ids)
 
-    def source_refs(self) -> ValuesView[SourceId]:
-        return self._source_ref_ids.values()
+    def dangling_project_ref_guids(self) -> MultiMapView[ProjectId, Guid]:
+        return MultiMapView(self._dangling_project_ref_ids)
+
+    def source_refs(self) -> SetView[SourceId]:
+        return SetView(self._source_ref_ids)
+
+    def dangling_source_refs(self) -> SetView[SourceId]:
+        return SetView(self._dangling_source_ref_ids)
 
     def properties(self) -> MapView[str, str]:
         return MapView(self._props)
@@ -181,24 +191,13 @@ class Project:
         return util.normalize_windows_relpath(context, path)
 
     def _add_assembly_id(self, assembly_id: AssemblyId):
-        name = assembly_id.name
-        if name in self._assembly_ref_ids:
+        if not (assembly_id in self._assembly_ref_ids or
+                assembly_id in self._dangling_assembly_ref_ids):
             path = assembly_id.path
-            path_map = self._assembly_ref_ids[name]
-            if path in path_map:
-                present = path_map[path]
-                if assembly_id != present:
-                    raise RuntimeError(
-                        "\n".join([
-                            "distinct assemblies with the same name and path???",
-                            f"  old: {present}",
-                            f"  new: {assembly_id}"
-                        ])
-                    )
+            if path is None or path.exists():
+                self._assembly_ref_ids.add(assembly_id)
             else:
-                path_map[path] = assembly_id
-        elif name in self._dangling_assembly_ref_ids:
-            self._assembly_ref_ids[name] = {assembly_id.path: assembly_id}
+                self._dangling_assembly_ref_ids.add(assembly_id)
 
     def _load_assembly_ref(
             self,
@@ -279,7 +278,10 @@ class Project:
                 self._add_assembly_id(assembly_id)
 
     def _add_project_id(self, guid: Guid, project_id: ProjectId):
-        self._project_ref_ids.add(project_id, guid)
+        if project_id.path.exists():
+            self._project_ref_ids.add(project_id, guid)
+        else:
+            self._dangling_project_ref_ids.add(project_id, guid)
 
     def _load_project_ref(
             self,
@@ -327,19 +329,12 @@ class Project:
         return ProjectLoadOk(None)
 
     def _add_source_id(self, source_id: SourceId):
-        path = source_id.path
-        if path in self._source_ref_ids:
-            present = self._source_ref_ids[path]
-            if source_id != present:
-                raise RuntimeError(
-                    "\n".join([
-                        "source files with identical paths but distinct names??",
-                        f"  old: {present}",
-                        f"  new: {source_id}"
-                    ])
-                )
-        else:
-            self._source_ref_ids[path] = source_id
+        if not (source_id in self._source_ref_ids or
+                source_id in self._dangling_source_ref_ids):
+            if source_id.path.exists():
+                self._source_ref_ids.add(source_id)
+            else:
+                self._dangling_source_ref_ids.add(source_id)
 
     def _load_source_ref(self, root: xml.Element) -> Optional[list[SourceId]]:
         INCLUDE = "Include"
@@ -442,7 +437,7 @@ class Project:
     #         if project_id is not None:
     #             yield project_id
 
-    def _load(self, registry: "ProjectRegistry") -> "ProjectLoadResult[Project]":
+    def _load(self, registry: "ProjectRegistry") -> ProjectLoadResult[Self]:
         with xml.parse(str(self._project_id.path)) as root:
             match self._load_props(registry, root):
                 case ProjectLoadDangling(backtrace):

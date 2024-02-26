@@ -179,13 +179,10 @@ class Solution:
                             self._duplicated_guids.add(guid, subproject_id)
                     else:
                         guid_map[guid] = subproject_id
-            for assembly in project.assembly_refs():
-                path = assembly.path
-                if path is not None and not path.exists():
-                    self._assembly_dangling.add(project_id, assembly)
-            for source in project.source_refs():
-                if not source.path.exists():
-                    self._source_dangling.add(project_id, source)
+            for assembly in project.dangling_assembly_refs():
+                self._assembly_dangling.add(project_id, assembly)
+            for source in project.dangling_source_refs():
+                self._source_dangling.add(project_id, source)
 
     def _load(self):
         self._load_roots()
