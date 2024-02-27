@@ -88,4 +88,3 @@ class OutputType(StrEnum):
             case "EXE" | "WINEXE": return self.EXE
             case "LIBRARY": return self.LIB
             case _: raise KeyError(value)
-

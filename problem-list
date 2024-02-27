@@ -1,0 +1,11 @@
+
+- solutions contain projects with references to projects outside of the solution
+- solutions, projects contain references to nonexistent projects
+- solutions, projects contain references to outdated projects
+- projects contain references to nonexistent assemblies
+- projects contain references to nonexistent source files
+- projects contain references to projects AND their output assemblies
+- projects contain references to assemblies that no projects produce
+- distinct projects produce the same assembly
+- distinct projects have the same GUID
+- solutions, projects reference paths lying outside the repository

@@ -343,10 +343,14 @@ class Project:
                 match_env(PLATFORM, platform, env)
             )
 
-        project_elems = root.getElementsByTagName("Project")
-        if len(project_elems) != 1:
+        # We expect a well-formed csproj file to contain:
+        #   a single Project node directly under root
+        #   (hopefully) an xmlns attribute matching the msbuild ns
+        if len(root.childNodes) > 1:
             return ProjectLoadIncompatible([self.project_id])
-        project_elem = project_elems[0]
+        project_elem = root.childNodes[0]
+        if project_elem.tagName != "Project":
+            return ProjectLoadIncompatible([self.project_id])
         if (
                 not project_elem.hasAttribute("xmlns") or
                 project_elem.getAttribute("xmlns") != self._PROJECT_XMLNS

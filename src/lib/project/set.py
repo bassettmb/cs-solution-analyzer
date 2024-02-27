@@ -1,4 +1,5 @@
-from collections.abc import KeysView
+from collections.abc import KeysView, Iterable
+from typing import Optional
 from ..id import AssemblyId, ProjectId, SourceId
 from ..data_view import MapView, SetView
 from ..multimap import MultiMap, MultiMapView
@@ -24,9 +25,9 @@ class ProjectSet:
     _projects_sans_output: set[ProjectId]
     _duplicate_outputs: MultiMap[AssemblyId, ProjectId]
 
-    def __init__(self):
+    def __init__(self, config: Optional[Iterable[tuple[str, str]]] = None):
 
-        self._registry = ProjectRegistry()
+        self._registry = ProjectRegistry(config)
 
         self._project_parents = MultiMap()
         self._project_outputs = dict()
@@ -108,13 +109,16 @@ class ProjectSet:
         return MultiMapView(self._source_dangling)
 
     def outputs(self) -> KeysView[AssemblyId]:
-        return self._project_by_output.keys()
+        return self._projects_by_output.keys()
 
     def projects_by_output(self) -> MapView[AssemblyId, ProjectId]:
-        return MapView(self._project_by_output)
+        return MapView(self._projects_by_output)
 
     def outputs_by_project(self) -> MapView[ProjectId, AssemblyId]:
-        return MapView(self._output_by_project)
+        return MapView(self._outputs_by_project)
+
+    def projects_without_output(self) -> SetView[ProjectId]:
+        return SetView(self._projects_sans_output)
 
     def duplicate_outputs(self) -> MultiMapView[AssemblyId, ProjectId]:
         return MultiMapView(self._duplicate_outputs)
