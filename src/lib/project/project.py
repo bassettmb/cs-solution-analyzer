@@ -24,7 +24,7 @@ from .parse_condition import parse_condition
 
 
 if TYPE_CHECKING:
-    from .project_registry import ProjectRegistry
+    from .registry import ProjectRegistry
 
 _path_has_leading_subst_regexp = re.compile(r"\$\([^\)]*\).*")
 
@@ -158,7 +158,7 @@ class Project:
             return None
         output_name = assembly_name + "." + output_type.to_extension()
         path = self._normalize_relpath(output_path) / output_name
-        return AssemblyId(assembly_name, path)
+        return AssemblyId(Name(assembly_name), path)
 
     def _normalize_relpath(self, path: str | Path) -> Path:
         context = self.project_id.path.parent
@@ -322,7 +322,7 @@ class Project:
     def _load_props(
             self,
             registry: "ProjectRegistry",
-            root: xml.Element
+            root: xml.Document
     ) -> ProjectLoadResult[None]:
 
         def match_condition(child, env):

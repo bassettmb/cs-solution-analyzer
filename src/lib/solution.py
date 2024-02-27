@@ -6,14 +6,14 @@ from collections.abc import (
     Iterable, Iterator,
     MutableMapping, MutableSet,
     Mapping, Set,
-    ValuesView
+    KeysView, ValuesView
 )
 from pathlib import Path
 from typing import Generic, Optional, TypeVar
 
 from . import util
 from .id import AssemblyId, Guid, ProjectId, ProjectId, SourceId
-from .data_view import SetView
+from .data_view import MapView, SetView
 from .multimap import (
     MultiMap, MultiMapView, MultiMapItemsView, MultiMapValuesView
 )
@@ -98,8 +98,8 @@ class ProjectSet:
                     elif output in self._projects_by_output:
                         dup_id = self._projects_by_output.pop(output)
                         del self._outputs_by_project[dup_id]
-                        self._duplicate_output.add(output, project_id)
-                        self._duplicate_output.add(output, dup_id)
+                        self._duplicate_outputs.add(output, project_id)
+                        self._duplicate_outputs.add(output, dup_id)
                     else:
                         self._projects_by_output[output] = project_id
                         self._outputs_by_project[project_id] = output
@@ -108,20 +108,20 @@ class ProjectSet:
                 case ProjectLoadCycle(_):
                     self._project_cyclic.add(project_id)
 
-    def projects(self) -> ValuesView[Project]:
-        return self._registry.complete().values()
+    def complete(self) -> MapView[ProjectId, Project]:
+        return self._registry.complete()
+
+    def incompatible(self) -> SetView[ProjectId]:
+        return self._registry.incompatible()
+
+    def cyclic(self) -> SetView[ProjectId]:
+        return SetView(self._project_cyclic)
+
+    def parents(self) -> MultiMapView[ProjectId, ProjectId]:
+        return MultiMapView(self._project_parents)
 
     def dangling_projects(self) -> SetView[ProjectId]:
         return self._registry.dangling()
-
-    def incompatible_projects(self) -> SetView[ProjectId]:
-        return self._registry.incompatible()
-
-    def cyclic_projects(self) -> SetView[ProjectId]:
-        return SetView(self._project_cyclic)
-
-    def project_parents(self) -> MultiMapView[ProjectId, ProjectId]:
-        return MultiMapView(self._project_parents)
 
     def dangling_assemblies(
             self
@@ -134,16 +134,16 @@ class ProjectSet:
         return MultiMapView(self._source_dangling)
 
     def outputs(self) -> KeysView[AssemblyId]:
-        return self._output_by_project.keys()
+        return self._project_by_output.keys()
 
-    def projects_by_output(self) -> MapView[ProjectId, AssemblyId]:
+    def projects_by_output(self) -> MapView[AssemblyId, ProjectId]:
         return MapView(self._project_by_output)
 
-    def outputs_by_project(self) -> MapView[AssemblyId, ProjectId]:
+    def outputs_by_project(self) -> MapView[ProjectId, AssemblyId]:
         return MapView(self._output_by_project)
 
-    def duplicate_outputs(self) -> MultiMap[AssemblyId, ProjectId]:
-        return MultiViewMap(self._duplicate_outputs)
+    def duplicate_outputs(self) -> MultiMapView[AssemblyId, ProjectId]:
+        return MultiMapView(self._duplicate_outputs)
 
 
 class Solution:
@@ -156,7 +156,7 @@ class Solution:
     _project_guids: MultiMap[ProjectId, Guid]
     _project_roots: set[ProjectId]
     _project_undeclared: MultiMap[ProjectId, ProjectId]
-    _duplicated_guids: MultiMap[Guid, ProjectId]
+    _duplicate_guids: MultiMap[Guid, ProjectId]
 
     _PARSE_PROJECT_REGEXP = _build_parse_project_regexp()
 
@@ -168,7 +168,7 @@ class Solution:
         self._project_guids = MultiMap()
         self._project_roots = set()
         self._project_undeclared = MultiMap()
-        self._duplicated_guids = MultiMap()
+        self._duplicate_guids = MultiMap()
 
         self._load()
 
@@ -208,9 +208,10 @@ class Solution:
         marks: dict[ProjectId, Mark] = dict()
         output = []
 
-        complete = self._registry.complete()
-        dangling = self._registry.dangling()
-        incompatible = self._registry.incompatible()
+        complete = self._project_set.complete()
+        dangling = self._project_set.dangling_projects()
+        incompatible = self._project_set.incompatible()
+        cyclic = self._project_set.cyclic()
 
         def visit(project_id: ProjectId) -> Optional[list[ProjectId]]:
             match marks.get(project_id, Mark.WHITE):
@@ -245,7 +246,7 @@ class Solution:
 
     def _scan_projects(self) -> None:
         guid_map: dict[Guid, ProjectId] = dict()
-        for project_id, project in self._registry.complete().items():
+        for project_id, project in self._project_set.complete().items():
             for (subproject_id, guids) in project.project_ref_guids().items():
                 if subproject_id not in self._project_roots:
                     self._project_undeclared.add(project_id, subproject_id)
@@ -253,17 +254,10 @@ class Solution:
                     if guid in guid_map:
                         other_id = guid_map[guid]
                         if other_id != subproject_id:
-                            self._duplicated_guids.add(guid, other_id)
-                            self._duplicated_guids.add(guid, subproject_id)
+                            self._duplicate_guids.add(guid, other_id)
+                            self._duplicate_guids.add(guid, subproject_id)
                     else:
                         guid_map[guid] = subproject_id
-            for assembly in project.assembly_refs():
-                assembly_path = assembly.path
-                if assembly_path is not None and not assembly_path.exists():
-                    self._assembly_dangling.add(project_id, assembly)
-            for source in project.source_refs():
-                if not source.path.exists():
-                    self._source_dangling.add(project_id, source)
 
     def _load(self):
         self._load_roots()
@@ -277,16 +271,16 @@ class Solution:
     def project_roots(self) -> SetView[ProjectId]:
         return SetView(self._project_roots)
 
-    def project_parents(self) -> MultiMapView[ProjectId, ProjectId]:
-        return MultiMapView(self._project_parents)
+    def parents(self) -> MultiMapView[ProjectId, ProjectId]:
+        return self._project_set.parents()
 
     def projects(self) -> ValuesView[Project]:
-        return self._project_set.projects()
+        return self._project_set.complete().values()
 
     @property
     def is_broken(self) -> bool:
         return (
-            self.has_duplicated_guids or
+            self.has_duplicate_guids or
             self.has_undeclared_projects or
             self.has_dangling_projects or
             self.has_dangling_assemblies or
@@ -296,8 +290,8 @@ class Solution:
         )
 
     @property
-    def has_duplicated_guids(self) -> bool:
-       return len(self._duplicated_guids) > 0
+    def has_duplicate_guids(self) -> bool:
+       return len(self._duplicate_guids) > 0
 
     @property
     def has_undeclared_projects(self) -> bool:
@@ -305,51 +299,44 @@ class Solution:
 
     @property
     def has_dangling_projects(self) -> bool:
-        return len(self._registry.dangling()) > 0
+        return len(self.dangling_projects()) > 0
 
     @property
     def has_dangling_assemblies(self) -> bool:
-        return len(self._assembly_dangling) > 0
+        return len(self.dangling_assemblies()) > 0
 
     @property
     def has_dangling_sources(self) -> bool:
-        return len(self._source_dangling) > 0
+        return len(self.dangling_sources()) > 0
 
     @property
     def has_incompatible_projects(self) -> bool:
-        return len(self._registry.incompatible()) > 0
+        return len(self.incompatible_projects()) > 0
 
     @property
     def has_cyclic_projects(self) -> bool:
-        return len(self._project_cyclic) > 0
+        return len(self.cyclic_projects()) > 0
 
-    def duplicated_guids(self) -> MultiMapView[Guid, ProjectId]:
-        return MultiMapView(self._duplicated_guids)
+    def duplicate_guids(self) -> MultiMapView[Guid, ProjectId]:
+        return MultiMapView(self._duplicate_guids)
 
-    def undeclared_projects(
-            self
-    ) -> Iterator[tuple[ProjectId, SetView[ProjectId]]]:
-        for project, undeclared in self._project_undeclared.items():
-            yield (project, SetView(undeclared))
+    def undeclared_projects(self) -> MultiMapView[ProjectId, ProjectId]:
+        return MultiMapView(self._project_undeclared)
 
     def dangling_projects(self) -> SetView[ProjectId]:
-        return self._registry.dangling()
+        return self._project_set.dangling_projects()
 
-    def dangling_assemblies(
-            self
-    ) -> MultiMapView[ProjectId, AssemblyId]:
-        return MultiMapView(self._assembly_dangling)
+    def dangling_assemblies(self) -> MultiMapView[ProjectId, AssemblyId]:
+        return self._project_set.dangling_assemblies()
 
-    def dangling_sources(
-            self
-    ) -> MultiMapView[ProjectId, SourceId]:
-        return MultiMapView(self._source_dangling)
+    def dangling_sources(self) -> MultiMapView[ProjectId, SourceId]:
+        return self._project_set.dangling_sources()
 
     def incompatible_projects(self) -> SetView[ProjectId]:
-        return self._registry.incompatible()
+        return self._project_set.incompatible()
 
     def cyclic_projects(self) -> SetView[ProjectId]:
-        return SetView(self._project_cyclic)
+        return self._project_set.cyclic()
 
     def __str__(self):
         return f"Solution({self.path})"

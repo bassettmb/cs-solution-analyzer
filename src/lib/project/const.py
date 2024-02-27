@@ -1,5 +1,4 @@
 from enum import StrEnum
-from typing import Self
 
 CONDITION: str = "Condition"
 CONFIGURATION: str = "Configuration"
@@ -24,7 +23,7 @@ class Configuration(StrEnum):
         return "Configuration"
 
     @classmethod
-    def members(self) -> set[Self]:
+    def members(self) -> "set[Configuration]":
         return set(self)
 
     @classmethod
@@ -32,7 +31,7 @@ class Configuration(StrEnum):
         return list(map(str, self.members()))
 
     @classmethod
-    def from_string(self, value: str) -> Self:
+    def from_string(self, value: str) -> "Configuration":
         for item in self:
             if item.value == value:
                 return item
@@ -49,7 +48,7 @@ class Platform(StrEnum):
         return "Platform"
 
     @classmethod
-    def members(self) -> set[Self]:
+    def members(self) -> "set[Platform]":
         return set(self)
 
     @classmethod
@@ -57,7 +56,7 @@ class Platform(StrEnum):
         return list(map(str, self.members()))
 
     @classmethod
-    def from_string(self, value: str) -> Self:
+    def from_string(self, value: str) -> "Platform":
         for item in self:
             if item.value == value:
                 return item
@@ -76,7 +75,7 @@ class OutputType(StrEnum):
             case _: assert False
 
     @classmethod
-    def members(self) -> set[Self]:
+    def members(self) -> "set[OutputType]":
         return set(self)
 
     @classmethod
@@ -84,8 +83,9 @@ class OutputType(StrEnum):
         return list(map(str, self.members()))
 
     @classmethod
-    def from_string(self, value: str) -> Self:
+    def from_string(self, value: str) -> "OutputType":
         match value.upper():
             case "EXE" | "WINEXE": return self.EXE
             case "LIBRARY": return self.LIB
             case _: raise KeyError(value)
+

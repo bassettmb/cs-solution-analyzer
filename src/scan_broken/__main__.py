@@ -44,11 +44,11 @@ def main():
                 print(indent + "dependency cycle:")
                 for project_dep in project_deps:
                     print(indent * 2 + str(project_dep.path))
-            if solution.has_duplicated_guids:
-                print(indent + "duplicated guids:")
-                for guid, project_ids in solution.duplicated_guids().items():
+            if solution.has_duplicate_guids:
+                print(indent + "duplicate guids:")
+                for guid, project_ids in solution.duplicate_guids().items():
                     print(indent * 2 + str(guid))
-                    parent_map = solution.project_parents()
+                    parent_map = solution.parents()
                     for project_id in project_ids:
                         print(indent * 3 + str(project_id))
                         if project_id in parent_map:
@@ -58,7 +58,7 @@ def main():
                             print(indent * 4, "<root>")
             if solution.has_undeclared_projects:
                 print(indent + "undeclared projects:")
-                for project, project_ids in solution.undeclared_projects():
+                for project, project_ids in solution.undeclared_projects().items():
                     print(indent * 2 + str(project.path))
                     for project_id in project_ids:
                         print(indent * 3 + str(project_id.path))

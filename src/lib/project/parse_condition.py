@@ -102,7 +102,7 @@ def parse_condition(
         text: str,
         configuration: Optional[str] = None,
         platform: Optional[str] = None
-) -> tuple[Optional[Configuration], Optional[Platform]]:
+) -> tuple[Optional[str], Optional[str]]:
     if match := just_config.match(text):
         configuration = match.group(CONFIGURATION)
     elif match := just_platform.match(text):

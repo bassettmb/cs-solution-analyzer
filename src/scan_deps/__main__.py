@@ -33,7 +33,7 @@ def create_registry(prog_config: Config) -> ProjectRegistry:
         config[CONFIGURATION] = prog_config.configuration.value
     if prog_config.platform is not None:
         config[PLATFORM] = prog_config.platform.value
-    return ProjectRegistry(config)
+    return ProjectRegistry(config.items())
 
 
 def main():
@@ -49,6 +49,7 @@ def main():
 
 
     for line in find_projects(prog_config.root).stdout.splitlines():
+
         path = util.normalize_windows_path(line)
         name = path.stem
         project_id = ProjectId(name, path)
